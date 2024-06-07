@@ -1,24 +1,22 @@
 from modal import App, Image, web_endpoint
 
-from models import Story
+from .common import get_news, gpt_data_vol
 
 import logging
 
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO)
 
 app = App("trending-stocks")
 
-ddgs_image = Image.debian_slim(python_version="3.12").run_commands(
-    "pip install duckduckgo_search"
-)
-
 httpx_image = Image.debian_slim(python_version="3.12").run_commands("pip install httpx")
+
+yfinance_image = Image.debian_slim(python_version="3.12").run_commands(
+    "pip install yfinance httpx"
+)
 
 
 @app.function(image=httpx_image)
-async def get_top_trending_stonks(num_stocks: int) -> list[str] | None:
+async def get_top_trending_tickers(num_stocks: int) -> list[str] | None:
     """
     Get the top trending stocks from ApeWisdom
     """
@@ -62,44 +60,51 @@ async def get_top_trending_stonks(num_stocks: int) -> list[str] | None:
     return [stock["ticker"] for stock in trending_stocks]
 
 
-@app.function(image=ddgs_image)
-async def ddgs_news(keywords: str, max_results: int = 5) -> list[Story] | None:
-    """
-    Get the top news for a given ticker symbol from DuckDuckGo
-    """
-    from duckduckgo_search import DDGS
-
-    ddgs = DDGS()
-    ticker_news = ddgs.news(keywords=keywords, max_results=max_results)
-    if not ticker_news:
-        return None
-    ticker_stories = []
-    for news_item in ticker_news:
-        ticker_stories.append(
-            Story(
-                title=news_item["title"],
-                url=news_item["url"],
-                timestamp=news_item["date"],
-                summary=news_item["body"],
-            )
-        )
-
-    return ticker_stories
-
-
-@app.function()
+@app.function(image=yfinance_image, volumes={"/data": gpt_data_vol})
 @web_endpoint()
-def get_trending_stocks_and_news(num_stocks: int = 6) -> list[tuple[str, list[Story]]]:
+async def get_trending_stocks_and_news(
+    num_stocks: int = 6,
+) -> list[tuple[str, list[dict]]]:
     """
-    Get the top trending stocks from ApeWisdom and the top news for each ticker from DuckDuckGo
+    Get the top news for each ticker
     """
-    list_of_ticker_stories: list[tuple[str, list[Story]]] = []
+    import os
+    from time import time
+    import pickle
+    import yfinance as yf
 
-    tickers: list[str] | None = get_top_trending_stonks.remote(num_stocks)
+    # check if data already exists and was run in the last 10 minutes
+    if os.path.exists("/data/trending_stocks.pkl"):
+        with open("/data/trending_stocks.pkl", "rb") as f:
+            try:
+                file_content = pickle.load(f)
+                data = file_content.get("data")
+                timestamp = file_content.get("timestamp")
+                if time() - timestamp < 600:
+                    logging.info(f"Loaded from pickle:\n{data}")
+                    return data
+            except Exception as e:
+                logging.error(f"Failed to load data from pickle: {e}")
+
+    # continue otherwise:
+    list_of_ticker_news: list[tuple[str, list[dict]]] = []
+
+    tickers: list[str] | None = get_top_trending_tickers.remote(num_stocks)
     if tickers is None:
         return []
     for ticker in tickers:
-        ticker_stories: list[Story] = ddgs_news.remote(ticker) or []
-        list_of_ticker_stories.append((ticker, ticker_stories))
+        ticker_news: list[dict] = await get_news(
+            ticker, yf.Ticker(ticker).info.get("shortName")
+        )
+        list_of_ticker_news.append((ticker, ticker_news))
 
-    return list_of_ticker_stories
+    logging.info(list_of_ticker_news)
+
+    # save to volume
+    with open("/data/trending_stocks.pkl", "wb") as f:
+        pickle.dump({"timestamp": time(), "data": list_of_ticker_news}, f)
+    gpt_data_vol.commit()
+
+    logging.info("Saved to volume.")
+
+    return list_of_ticker_news

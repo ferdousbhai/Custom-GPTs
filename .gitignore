@@ -1,3 +1,6 @@
+__pycache__
 _tools
 .venv
 main.py
+test*
+try*

@@ -68,6 +68,7 @@ async def get_trending_stocks_and_news(
     """
     Get the top news for each ticker
     """
+    import asyncio
     import os
     from time import time
     import pickle
@@ -92,11 +93,14 @@ async def get_trending_stocks_and_news(
     tickers: list[str] | None = get_top_trending_tickers.remote(num_stocks)
     if tickers is None:
         return []
-    for ticker in tickers:
-        ticker_news: list[dict] = await get_news(
-            ticker, yf.Ticker(ticker).info.get("shortName")
-        )
-        list_of_ticker_news.append((ticker, ticker_news))
+
+    async def fetch_news_for_ticker(ticker):
+        ticker_news = await get_news(ticker, yf.Ticker(ticker).info.get("shortName"))
+        return (ticker, ticker_news)
+
+    list_of_ticker_news = await asyncio.gather(
+        *(fetch_news_for_ticker(ticker) for ticker in tickers)
+    )
 
     logging.info(list_of_ticker_news)
 

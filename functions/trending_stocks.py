@@ -1,6 +1,10 @@
-from modal import App, Image, web_endpoint
-from .common import gpt_data_vol, ddgs_news
+from modal import App, Image, Secret, web_endpoint
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+import os
 import logging
+from .common import gpt_data_vol, ddgs_news
+
 
 logging.basicConfig(level=logging.INFO)
 
@@ -11,6 +15,8 @@ httpx_image = Image.debian_slim(python_version="3.12").run_commands("pip install
 yfinance_image = Image.debian_slim(python_version="3.12").run_commands(
     "pip install yfinance httpx"
 )
+
+auth_scheme = HTTPBearer()
 
 
 @app.function(image=httpx_image, volumes={"/data": gpt_data_vol})
@@ -54,28 +60,36 @@ async def get_top_trending_tickers(num_stocks: int) -> list[str] | None:
         report += f"\n{stock['ticker']} ({stock['name']}) was mentioned {stock['mentions']} times with {stock['upvotes']} upvotes. It was mentioned {stock['mentions_24h_ago']} times 24h ago."
     logging.info(report)
 
-    # return the "ticker" values as a list of strings
     return [stock["ticker"] for stock in trending_stocks]
 
 
-@app.function(image=yfinance_image, volumes={"/data": gpt_data_vol})
+@app.function(
+    image=yfinance_image,
+    volumes={"/data": gpt_data_vol},
+    secrets=[Secret.from_name("auth-token")],
+)
 @web_endpoint()
-async def get_trending_stocks_and_news(
-    num_stocks: int = 6,
+def get_trending_stocks_and_news(
+    num_stocks: int = 6, token: HTTPAuthorizationCredentials = Depends(auth_scheme)
 ) -> list[tuple[str, list[dict]]]:
     """
     Get the top news for each ticker
     """
-    import asyncio
-    import os
     from time import time
     import pickle
     import yfinance as yf
 
+    if token.credentials != os.environ["AUTH_TOKEN"]:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect bearer token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     def load_from_pickle(
         filename: str = "/data/trending_stocks.pkl", expiration_time: int = 600
     ) -> list[tuple[str, list[dict]]] | None:
-        if os.path.exists(filename):
+        if os.path.exists(filename) and os.path.getsize(filename) > 0:
             with open(filename, "rb") as f:
                 file_content = pickle.load(f)
                 data = file_content.get("data")
@@ -99,13 +113,9 @@ async def get_trending_stocks_and_news(
     if tickers is None:
         raise ValueError("No tickers found")
 
-    async def fetch_news_for_ticker(ticker):
-        ticker_news = ddgs_news.remote(ticker, yf.Ticker(ticker).info.get("shortName"))
-        return (ticker, ticker_news)
+    ticker_desc = [yf.Ticker(ticker).info.get("shortName") for ticker in tickers]
 
-    list_of_ticker_news = await asyncio.gather(
-        *(fetch_news_for_ticker(ticker) for ticker in tickers)
-    )
+    list_of_ticker_news = list(ddgs_news.map(tickers, ticker_desc))
 
     logging.info(list_of_ticker_news)
 

@@ -1,6 +1,9 @@
-from modal import App, Image, web_endpoint
-from .common import ddgs_news
+from modal import App, Image, Secret, web_endpoint
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+import os
 import logging
+from .common import ddgs_news
 
 logging.basicConfig(level=logging.INFO)
 
@@ -10,10 +13,14 @@ finance_image = Image.debian_slim(python_version="3.12").run_commands(
     "pip install httpx yfinance tabulate"
 )
 
+auth_scheme = HTTPBearer()
 
-@app.function(image=finance_image)
+
+@app.function(image=finance_image, secrets=[Secret.from_name("auth-token")])
 @web_endpoint()
-async def generate_investment_report(ticker_to_research: str) -> str:
+async def generate_investment_report(
+    ticker_to_research: str, token: HTTPAuthorizationCredentials = Depends(auth_scheme)
+) -> str:
     """
     Generate an investment report for a given ticker.
     This function generates a report with the following sections:
@@ -24,6 +31,13 @@ async def generate_investment_report(ticker_to_research: str) -> str:
     The data is pulled from yfinance and ddgs.
     """
     import yfinance as yf
+
+    if token.credentials != os.environ["AUTH_TOKEN"]:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect bearer token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     logging.info(f"Generating report for: {ticker_to_research}")
 

@@ -109,9 +109,3 @@ def ddgs_news(
     except Exception as e:
         logging.error(f"Failed to fetch news: {e}")
         return None
-
-
-# Testing
-@app.local_entrypoint()
-def test_ddgs_news():
-    print(ddgs_news.remote("NVDA", "Nvidia company"))

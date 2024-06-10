@@ -1,4 +1,4 @@
-from modal import App, Image, Secret, web_endpoint
+from modal import App, Image, Secret
 
 from .common import gpt_data_vol
 
@@ -41,6 +41,7 @@ def filter_relevant_news(
         embeddings = [r.embedding for r in response.data]
     except Exception as e:
         logging.error(f"Failed to get embeddings: {e}")
+        logging.info("Returning news items without filtering.")
         return news_items
 
     search_embedding = embeddings[0]
@@ -65,7 +66,6 @@ def filter_relevant_news(
 
 
 @app.function(image=ddgs_image, volumes={"/data": gpt_data_vol})
-@web_endpoint()
 def ddgs_news(
     search_term: str, description: str, max_results: int = 5
 ) -> list[dict] | None:
@@ -77,37 +77,41 @@ def ddgs_news(
     import pickle
     from duckduckgo_search import DDGS
 
-    # check if data already exists and was run in the last 10 minutes
-    if os.path.exists(f"/data/{search_term}.pkl"):
-        with open(f"/data/{search_term}.pkl", "rb") as f:
-            try:
-                file_content = pickle.load(f)
-                data = file_content.get("data")
-                timestamp = file_content.get("timestamp")
-                if time() - timestamp < 600:
-                    logging.info(f"Loaded from pickle:\n{data}")
-                    return data
-            except Exception as e:
-                logging.error(f"Failed to load data from pickle: {e}")
+    try:
+        cache_path = f"/data/{search_term}.pkl"
+        if os.path.exists(cache_path):
+            with open(cache_path, "rb") as f:
+                try:
+                    file_content = pickle.load(f)
+                    data = file_content.get("data")
+                    timestamp = file_content.get("timestamp")
+                    if time() - timestamp < 600:
+                        logging.info(f"Loaded from pickle:\n{data}")
+                        return data
+                except Exception as e:
+                    logging.error(f"Failed to load data from pickle: {e}")
 
-    # if data doesn't exist or was run in the last 10 minutes, fetch from DDGS
-    news_list = DDGS().news(keywords=search_term, max_results=max_results)
-    if not news_list:
+        # Fetch from DDGS
+        news_list = DDGS().news(keywords=search_term, max_results=max_results)
+        if not news_list:
+            return None
+
+        # filter out the irrelevant news items
+        relevant_news = filter_relevant_news.remote(search_term, description, news_list)
+
+        # save to volume
+        with open(f"/data/{search_term}.pkl", "wb") as f:
+            pickle.dump({"timestamp": time(), "data": relevant_news}, f)
+        gpt_data_vol.commit()
+
+        logging.info(f"Saved news to volume as {search_term}.pkl")
+        return relevant_news
+    except Exception as e:
+        logging.error(f"Failed to fetch news: {e}")
         return None
 
-    # filter out the irrelevant news items
-    relevant_news = filter_relevant_news.remote(search_term, description, news_list)
 
-    # save to volume
-    with open(f"/data/{search_term}.pkl", "wb") as f:
-        pickle.dump({"timestamp": time(), "data": relevant_news}, f)
-    gpt_data_vol.commit()
-
-    logging.info(f"Saved news to volume as {search_term}.pkl")
-
-    return relevant_news
-
-
-# @app.local_entrypoint()
-# def test_ddgs_news():
-#     print(ddgs_news.remote("NVDA", "Nvidia company"))
+# Testing
+@app.local_entrypoint()
+def test_ddgs_news():
+    print(ddgs_news.remote("NVDA", "Nvidia company"))

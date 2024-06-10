@@ -1,7 +1,5 @@
 from modal import App, Image, web_endpoint
-
-from .common import get_news
-
+from .common import ddgs_news
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -40,7 +38,7 @@ async def generate_investment_report(ticker_to_research: str) -> str:
         report.append("Ticker Info:\n" + str(ticker.info))
 
     # Get news from ddgs
-    ticker_news = await get_news(ticker_to_research, ticker.info.get("shortName"))
+    ticker_news = ddgs_news.remote(ticker_to_research, ticker.info.get("shortName"))
     logging.info("Fetched news")
 
     if ticker_news:

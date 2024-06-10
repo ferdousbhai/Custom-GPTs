@@ -1,7 +1,5 @@
 from modal import App, Image, web_endpoint
-
-from .common import get_news, gpt_data_vol
-
+from .common import gpt_data_vol, ddgs_news
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -15,7 +13,7 @@ yfinance_image = Image.debian_slim(python_version="3.12").run_commands(
 )
 
 
-@app.function(image=httpx_image)
+@app.function(image=httpx_image, volumes={"/data": gpt_data_vol})
 async def get_top_trending_tickers(num_stocks: int) -> list[str] | None:
     """
     Get the top trending stocks from ApeWisdom
@@ -74,28 +72,35 @@ async def get_trending_stocks_and_news(
     import pickle
     import yfinance as yf
 
-    # check if data already exists and was run in the last 10 minutes
-    if os.path.exists("/data/trending_stocks.pkl"):
-        with open("/data/trending_stocks.pkl", "rb") as f:
-            try:
+    def load_from_pickle(
+        filename: str = "/data/trending_stocks.pkl", expiration_time: int = 600
+    ) -> list[tuple[str, list[dict]]] | None:
+        if os.path.exists(filename):
+            with open(filename, "rb") as f:
                 file_content = pickle.load(f)
                 data = file_content.get("data")
                 timestamp = file_content.get("timestamp")
-                if time() - timestamp < 600:
-                    logging.info(f"Loaded from pickle:\n{data}")
+                if time() - timestamp < expiration_time:
                     return data
-            except Exception as e:
-                logging.error(f"Failed to load data from pickle: {e}")
+        return None
 
-    # continue otherwise:
-    list_of_ticker_news: list[tuple[str, list[dict]]] = []
+    def save_to_pickle(data, filename: str = "/data/trending_stocks.pkl"):
+        with open(filename, "wb") as f:
+            pickle.dump({"timestamp": time(), "data": data}, f)
+        gpt_data_vol.commit()
+
+    list_of_ticker_news: list[tuple[str, list[dict]]] | None = load_from_pickle()
+
+    if list_of_ticker_news:
+        logging.info(f"Loaded from pickle:\n{list_of_ticker_news}")
+        return list_of_ticker_news
 
     tickers: list[str] | None = get_top_trending_tickers.remote(num_stocks)
     if tickers is None:
-        return []
+        raise ValueError("No tickers found")
 
     async def fetch_news_for_ticker(ticker):
-        ticker_news = await get_news(ticker, yf.Ticker(ticker).info.get("shortName"))
+        ticker_news = ddgs_news.remote(ticker, yf.Ticker(ticker).info.get("shortName"))
         return (ticker, ticker_news)
 
     list_of_ticker_news = await asyncio.gather(
@@ -104,11 +109,7 @@ async def get_trending_stocks_and_news(
 
     logging.info(list_of_ticker_news)
 
-    # save to volume
-    with open("/data/trending_stocks.pkl", "wb") as f:
-        pickle.dump({"timestamp": time(), "data": list_of_ticker_news}, f)
-    gpt_data_vol.commit()
-
+    save_to_pickle(list_of_ticker_news)
     logging.info("Saved to volume.")
 
     return list_of_ticker_news

@@ -1,6 +1,4 @@
-from modal import App, Image, Secret
-
-from .common import gpt_data_vol
+from modal import App, Image, Secret, Dict
 
 import logging
 
@@ -15,6 +13,8 @@ eval_image = Image.debian_slim(python_version="3.12").run_commands(
 ddgs_image = Image.debian_slim(python_version="3.12").run_commands(
     "pip install duckduckgo_search"
 )
+
+ddgs_news_results = Dict.from_name("ddgs_news_results", create_if_missing=True)
 
 
 @app.function(image=eval_image, secrets=[Secret.from_name("openai")])
@@ -65,47 +65,40 @@ def filter_relevant_news(
     return relevant_news
 
 
-@app.function(image=ddgs_image, volumes={"/data": gpt_data_vol})
+@app.function(image=ddgs_image)
 def ddgs_news(
     search_term: str, description: str, max_results: int = 5
 ) -> list[dict] | None:
     """
     Get the top news for a given search term from DuckDuckGo and filter out the irrelevant ones based on the description
     """
-    import os
     from time import time
-    import pickle
     from duckduckgo_search import DDGS
 
-    try:
-        cache_path = f"/data/{search_term}.pkl"
-        if os.path.exists(cache_path):
-            with open(cache_path, "rb") as f:
-                try:
-                    file_content = pickle.load(f)
-                    data = file_content.get("data")
-                    timestamp = file_content.get("timestamp")
-                    if time() - timestamp < 600:
-                        logging.info(f"Loaded from pickle:\n{data}")
-                        return data
-                except Exception as e:
-                    logging.error(f"Failed to load data from pickle: {e}")
+    # search_term must be a valid dictionary key
+    search_term = search_term.lower().strip()
 
-        # Fetch from DDGS
-        news_list = DDGS().news(keywords=search_term, max_results=max_results)
-        if not news_list:
-            return None
+    # check if the news is already cached
+    result = ddgs_news_results.get(search_term)
+    if result and time() - result["updated_at"] < 600:
+        logging.info(f"Loaded {search_term} news from previous run.")
+        return result["data"]
 
-        # filter out the irrelevant news items
-        relevant_news = filter_relevant_news.remote(search_term, description, news_list)
-
-        # save to volume
-        with open(f"/data/{search_term}.pkl", "wb") as f:
-            pickle.dump({"timestamp": time(), "data": relevant_news}, f)
-        gpt_data_vol.commit()
-
-        logging.info(f"Saved news to volume as {search_term}.pkl")
-        return relevant_news
-    except Exception as e:
-        logging.error(f"Failed to fetch news: {e}")
+    # Fetch from DDGS
+    news_list = DDGS().news(keywords=search_term, max_results=max_results)
+    if not news_list:
+        logging.info(f"No news found for {search_term}")
         return None
+
+    # filter out the irrelevant items
+    relevant_news = filter_relevant_news.remote(search_term, description, news_list)
+
+    # save to dict
+    ddgs_news_results[search_term] = {"updated_at": time(), "data": relevant_news}
+    logging.info(f"Cached {search_term} news to dict.")
+    return relevant_news
+
+
+@app.local_entrypoint()
+def test_ddgs_news():
+    print(ddgs_news.remote("MSFT", "Microsoft Corp"))

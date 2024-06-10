@@ -1,9 +1,8 @@
-from modal import App, Image, Secret, web_endpoint
+from modal import App, Image, Secret, Function, Dict, web_endpoint
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import os
 import logging
-from .common import gpt_data_vol, ddgs_news
 
 
 logging.basicConfig(level=logging.INFO)
@@ -18,8 +17,14 @@ yfinance_image = Image.debian_slim(python_version="3.12").run_commands(
 
 auth_scheme = HTTPBearer()
 
+ddgs_news = Function.lookup("ddgs-news", "ddgs_news")
 
-@app.function(image=httpx_image, volumes={"/data": gpt_data_vol})
+trending_stocks_and_news_results = Dict.from_name(
+    "trending_stocks_and_news_results", create_if_missing=True
+)
+
+
+@app.function(image=httpx_image)
 async def get_top_trending_tickers(num_stocks: int) -> list[str] | None:
     """
     Get the top trending stocks from ApeWisdom
@@ -65,7 +70,6 @@ async def get_top_trending_tickers(num_stocks: int) -> list[str] | None:
 
 @app.function(
     image=yfinance_image,
-    volumes={"/data": gpt_data_vol},
     secrets=[Secret.from_name("auth-token")],
 )
 @web_endpoint()
@@ -76,7 +80,6 @@ def get_trending_stocks_and_news(
     Get the top news for each ticker
     """
     from time import time
-    import pickle
     import yfinance as yf
 
     if token.credentials != os.environ["AUTH_TOKEN"]:
@@ -86,28 +89,11 @@ def get_trending_stocks_and_news(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    def load_from_pickle(
-        filename: str = "/data/trending_stocks.pkl", expiration_time: int = 600
-    ) -> list[tuple[str, list[dict]]] | None:
-        if os.path.exists(filename) and os.path.getsize(filename) > 0:
-            with open(filename, "rb") as f:
-                file_content = pickle.load(f)
-                data = file_content.get("data")
-                timestamp = file_content.get("timestamp")
-                if time() - timestamp < expiration_time:
-                    return data
-        return None
-
-    def save_to_pickle(data, filename: str = "/data/trending_stocks.pkl"):
-        with open(filename, "wb") as f:
-            pickle.dump({"timestamp": time(), "data": data}, f)
-        gpt_data_vol.commit()
-
-    list_of_ticker_news: list[tuple[str, list[dict]]] | None = load_from_pickle()
-
-    if list_of_ticker_news:
-        logging.info(f"Loaded from pickle:\n{list_of_ticker_news}")
-        return list_of_ticker_news
+    # check if cached result is valid
+    result = trending_stocks_and_news_results.get("trending_stocks_and_news")
+    if result and time() - result["updated_at"] < 600:
+        logging.info("Loaded from cache.")
+        return result["data"]
 
     tickers: list[str] | None = get_top_trending_tickers.remote(num_stocks)
     if tickers is None:
@@ -119,7 +105,11 @@ def get_trending_stocks_and_news(
 
     logging.info(list_of_ticker_news)
 
-    save_to_pickle(list_of_ticker_news)
+    # save to dict
+    trending_stocks_and_news_results["trending_stocks_and_news"] = {
+        "updated_at": time(),
+        "data": list_of_ticker_news,
+    }
     logging.info("Saved to volume.")
 
     return list_of_ticker_news

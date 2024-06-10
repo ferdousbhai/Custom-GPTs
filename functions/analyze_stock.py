@@ -1,9 +1,8 @@
-from modal import App, Image, Secret, web_endpoint
+from modal import App, Image, Secret, Function, web_endpoint
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import os
 import logging
-from .common import ddgs_news
 
 logging.basicConfig(level=logging.INFO)
 
@@ -14,6 +13,8 @@ finance_image = Image.debian_slim(python_version="3.12").run_commands(
 )
 
 auth_scheme = HTTPBearer()
+
+ddgs_news = Function.lookup("ddgs-news", "ddgs_news")
 
 
 @app.function(image=finance_image, secrets=[Secret.from_name("auth-token")])

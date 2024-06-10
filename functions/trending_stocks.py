@@ -92,7 +92,7 @@ def get_trending_stocks_and_news(
     # check if cached result is valid
     result = trending_stocks_and_news_results.get("trending_stocks_and_news")
     if result and time() - result["updated_at"] < 600:
-        logging.info("Loaded from cache.")
+        logging.info("Loaded from dict.")
         return result["data"]
 
     tickers: list[str] | None = get_top_trending_tickers.remote(num_stocks)
@@ -110,6 +110,6 @@ def get_trending_stocks_and_news(
         "updated_at": time(),
         "data": list_of_ticker_news,
     }
-    logging.info("Saved to volume.")
+    logging.info("Saved to dict.")
 
     return list_of_ticker_news

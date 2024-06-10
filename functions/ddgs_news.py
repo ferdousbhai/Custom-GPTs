@@ -18,7 +18,7 @@ ddgs_news_results = Dict.from_name("ddgs_news_results", create_if_missing=True)
 
 
 @app.function(image=eval_image, secrets=[Secret.from_name("openai")])
-def filter_relevant_news(
+async def filter_relevant_news(
     search_term: str,
     description: str,
     news_items: list[dict],
@@ -37,7 +37,9 @@ def filter_relevant_news(
     ]
 
     try:
-        response = client.embeddings.create(input=texts, model="text-embedding-ada-002")
+        response = await client.embeddings.create(
+            input=texts, model="text-embedding-ada-002"
+        )
         embeddings = [r.embedding for r in response.data]
     except Exception as e:
         logging.error(f"Failed to get embeddings: {e}")
@@ -73,15 +75,16 @@ def ddgs_news(
     Get the top news for a given search term from DuckDuckGo and filter out the irrelevant ones based on the description
     """
     from time import time
+    import re
     from duckduckgo_search import DDGS
 
-    # search_term must be a valid dictionary key
-    search_term = search_term.lower().strip()
+    # Sanitize the search_term to be used as a dictionary key
+    sanitized_search_term = re.sub(r"\W+", "_", search_term.lower().strip())
 
     # check if the news is already cached
-    result = ddgs_news_results.get(search_term)
+    result = ddgs_news_results.get(sanitized_search_term)
     if result and time() - result["updated_at"] < 600:
-        logging.info(f"Loaded {search_term} news from previous run.")
+        logging.info(f"Loaded {sanitized_search_term} news from previous run.")
         return result["data"]
 
     # Fetch from DDGS
@@ -94,8 +97,11 @@ def ddgs_news(
     relevant_news = filter_relevant_news.remote(search_term, description, news_list)
 
     # save to dict
-    ddgs_news_results[search_term] = {"updated_at": time(), "data": relevant_news}
-    logging.info(f"Cached {search_term} news to dict.")
+    ddgs_news_results[sanitized_search_term] = {
+        "updated_at": time(),
+        "data": relevant_news,
+    }
+    logging.info(f"Cached {sanitized_search_term} news to dict.")
     return relevant_news
 
 

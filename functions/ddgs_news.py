@@ -74,17 +74,18 @@ async def get_news_list(
     """
     from duckduckgo_search import AsyncDDGS
 
-    try:
-        news_items = await AsyncDDGS().anews(
-            keywords=f"{search_term} {description}", max_results=max_results
-        )
-        return [
-            {"title": item["title"], "body": item["body"], "url": item["url"]}
-            for item in news_items
-        ]
-    except Exception as e:
-        logging.error(f"Failed to get news: {e}")
-        return None
+    async with AsyncDDGS() as client:
+        try:
+            news_items = await client.anews(
+                keywords=f"{search_term} {description}", max_results=max_results
+            )
+            return [
+                {"title": item["title"], "body": item["body"], "url": item["url"]}
+                for item in news_items
+            ]
+        except Exception as e:
+            logging.error(f"Failed to get news: {e}")
+            return None
 
 
 @app.function()

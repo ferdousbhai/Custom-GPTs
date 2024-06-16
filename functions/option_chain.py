@@ -31,7 +31,7 @@ def parse_option_symbol(symbol: str):
 
 @app.function(image=yfinance_image)
 def get_options(
-    ticker_symbol: str, sort_by: str = "openInterest", num_options: int = 3
+    ticker_symbol: str, sort_by: str = "openInterest", num_options: int = 4
 ) -> list[dict]:
     import pandas as pd
     import yfinance as yf

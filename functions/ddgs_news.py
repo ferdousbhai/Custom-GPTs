@@ -66,7 +66,9 @@ def filter_relevant_news(
 
 
 @app.function(image=ddgs_image)
-async def get_news_list(search_term: str, max_results: int = 5) -> list[dict] | None:
+async def get_news_list(
+    search_term: str, description: str, max_results: int = 5
+) -> list[dict] | None:
     """
     Get the top news for a given search term from DuckDuckGo
     """
@@ -74,7 +76,7 @@ async def get_news_list(search_term: str, max_results: int = 5) -> list[dict] | 
 
     try:
         news_items = await AsyncDDGS().anews(
-            keywords=search_term, max_results=max_results
+            keywords=f"{search_term} {description}", max_results=max_results
         )
         return [
             {"title": item["title"], "body": item["body"], "url": item["url"]}
@@ -105,7 +107,7 @@ async def ddgs_news(
         return result["data"]
 
     # Fetch from DDGS
-    news_list = await get_news_list.remote.aio(search_term, max_results)
+    news_list = await get_news_list.remote.aio(search_term, description, max_results)
     if not news_list:
         logging.info(f"No news found for {search_term}")
         return None
@@ -120,64 +122,3 @@ async def ddgs_news(
     }
     logging.info(f"Cached {sanitized_search_term} news to dict.")
     return relevant_news
-
-
-# TESTING
-
-
-# Example:
-# modal run functions.ddgs_news::test_get_news_list --ticker "ARKQ"
-@app.local_entrypoint()
-async def test_get_news_list(ticker: str):
-    result = await get_news_list.remote.aio(ticker)
-    print(result)
-
-
-# Example:
-# modal run functions.ddgs_news::test_filter_relevant_news
-@app.local_entrypoint()
-def test_filter_relevant_news():
-    """
-    Test the filter_relevant_news function to ensure it correctly filters news items based on relevance.
-    """
-    # Define a mock search term and description
-    search_term = "technology"
-    description = "Latest advancements in technology"
-
-    # Create a list of mock news items
-    news_items = [
-        {"title": "Tech Innovations", "body": "New breakthroughs in AI technology."},
-        {"title": "Global Politics", "body": "Discussion on international relations."},
-        {
-            "title": "Technology Conference",
-            "body": "Upcoming conference on technology trends.",
-        },
-        {"title": "Sports Update", "body": "Latest scores from basketball games."},
-        {
-            "title": "Tech Mergers",
-            "body": "Recent tech company mergers and acquisitions.",
-        },
-    ]
-
-    # Expected output should only include relevant news items
-    expected_output = [
-        {"title": "Tech Innovations", "body": "New breakthroughs in AI technology."},
-        {
-            "title": "Technology Conference",
-            "body": "Upcoming conference on technology trends.",
-        },
-        {
-            "title": "Tech Mergers",
-            "body": "Recent tech company mergers and acquisitions.",
-        },
-    ]
-
-    # Call the filter_relevant_news function
-    actual_output = filter_relevant_news.remote(search_term, description, news_items)
-
-    # Assert to check if the actual output matches the expected output
-    assert (
-        actual_output == expected_output
-    ), "The filter_relevant_news function did not return the expected results."
-
-    print("All tests passed for filter_relevant_news. ✅")

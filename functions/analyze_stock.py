@@ -15,13 +15,14 @@ finance_image = Image.debian_slim(python_version="3.12").run_commands(
 auth_scheme = HTTPBearer()
 
 ddgs_news = Function.lookup("ddgs-news", "ddgs_news")
+get_options = Function.lookup("get-options", "get_options")
 
 
 @app.function(image=finance_image, secrets=[Secret.from_name("auth-token")])
 @web_endpoint()
 async def generate_investment_report(
     ticker_to_research: str, token: HTTPAuthorizationCredentials = Depends(auth_scheme)
-) -> dict:
+) -> tuple[dict, str]:
     """
     Generate an investment report for a given ticker.
     This function generates a report with the following sections:
@@ -32,6 +33,8 @@ async def generate_investment_report(
     The data is pulled from yfinance and ddgs.
     """
     import yfinance as yf
+    from datetime import datetime
+    from time import time
 
     if token.credentials != os.environ["AUTH_TOKEN"]:
         raise HTTPException(
@@ -49,7 +52,7 @@ async def generate_investment_report(
 
     # Get ticker info from yfinance
     if ticker.info:
-        result["ticker_info"] = ticker.info
+        result["tickerInfo"] = ticker.info
 
     # Get news from ddgs
     ticker_news_list = await ddgs_news.remote.aio(
@@ -69,5 +72,14 @@ async def generate_investment_report(
         logging.info("Fetched upgrades and downgrades")
         result["upgrades_downgrades"] = ticker.upgrades_downgrades.head(20).to_json()
 
+    # Get options
+    options: list[list[dict]] = get_options.remote(ticker_to_research, num_options=6)
+    if options:
+        logging.info("Fetched options")
+        result["options"] = options
+
     logging.info(f"Generated report for ticker: {ticker_to_research}:\n{result}")
-    return result
+    return (
+        result,
+        f"Current time: {datetime.fromtimestamp(time()).strftime('%Y-%m-%d %H:%M')}",
+    )

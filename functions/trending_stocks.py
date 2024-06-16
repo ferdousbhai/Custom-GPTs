@@ -18,6 +18,7 @@ yfinance_image = Image.debian_slim(python_version="3.12").run_commands(
 auth_scheme = HTTPBearer()
 
 ddgs_news = Function.lookup("ddgs-news", "ddgs_news")
+get_options = Function.lookup("get-options", "get_options")
 
 trending_stocks_and_news_result = Dict.from_name(
     "trending_stocks_and_news_result", create_if_missing=True
@@ -69,11 +70,12 @@ async def get_top_trending_tickers(num_stocks: int) -> list[str] | None:
 @web_endpoint()
 def get_trending_stocks_and_news(
     num_stocks: int = 6, token: HTTPAuthorizationCredentials = Depends(auth_scheme)
-) -> list[tuple[str, list[dict]]]:
+) -> tuple[list[tuple[str, list[dict]]], str]:
     """
     Get the top news for each ticker
     """
     from time import time
+    from datetime import datetime
     import yfinance as yf
 
     if token.credentials != os.environ["AUTH_TOKEN"]:
@@ -88,20 +90,31 @@ def get_trending_stocks_and_news(
     updated_at = trending_stocks_and_news_result.get("updated_at")
     if result_data and time() - updated_at < 600:
         logging.info(f"Loaded from dict. \n{result_data}")
-        return result_data
+        return (
+            result_data,
+            f"Last updated: {datetime.fromtimestamp(updated_at).strftime('%Y-%m-%d %H:%M')}",
+        )
 
-    # get tickers and news
+    # get tickers, news, and options
     tickers: list[str] | None = get_top_trending_tickers.remote(num_stocks)
+    logging.info(f"Tickers: {tickers}")
     if tickers is None:
         raise ValueError("No tickers found")
     ticker_desc = [yf.Ticker(ticker).info.get("shortName") for ticker in tickers]
     news: list[list[dict]] = list(ddgs_news.map(tickers, ticker_desc))
-    ticker_news_pairs = list(zip(tickers, news))
-    logging.info(f"Ticker news pairs:\n{ticker_news_pairs}")
+    options: list[list[dict]] = list(get_options.map(tickers))
+
+    # zip the tickers, news, and options
+    ticker_news_options_pairs = list(zip(tickers, news, options))
+    logging.info(f"Ticker news pairs:\n{ticker_news_options_pairs}")
 
     # save to dict
-    trending_stocks_and_news_result["data"] = ticker_news_pairs
-    trending_stocks_and_news_result["updated_at"] = time()
+    trending_stocks_and_news_result["data"] = ticker_news_options_pairs
+    timestamp = time()
+    trending_stocks_and_news_result["updated_at"] = timestamp
     logging.info("Saved to dict.")
 
-    return ticker_news_pairs
+    return (
+        ticker_news_options_pairs,
+        f"Current time: {datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M')}",
+    )

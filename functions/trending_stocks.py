@@ -19,8 +19,8 @@ auth_scheme = HTTPBearer()
 
 ddgs_news = Function.lookup("ddgs-news", "ddgs_news")
 
-trending_stocks_and_news_results = Dict.from_name(
-    "trending_stocks_and_news_results", create_if_missing=True
+trending_stocks_and_news_result = Dict.from_name(
+    "trending_stocks_and_news_result", create_if_missing=True
 )
 
 
@@ -59,12 +59,6 @@ async def get_top_trending_tickers(num_stocks: int) -> list[str] | None:
         item["ticker"]: item for item in most_upvoted + most_mentions
     }.values()
 
-    # log
-    report = "#Trending Stonks:"
-    for stock in trending_stocks:
-        report += f"\n{stock['ticker']} ({stock['name']}) was mentioned {stock['mentions']} times with {stock['upvotes']} upvotes. It was mentioned {stock['mentions_24h_ago']} times 24h ago."
-    logging.info(report)
-
     return [stock["ticker"] for stock in trending_stocks]
 
 
@@ -90,26 +84,24 @@ def get_trending_stocks_and_news(
         )
 
     # check if cached result is valid
-    result = trending_stocks_and_news_results.get("trending_stocks_and_news")
-    if result and time() - result["updated_at"] < 600:
-        logging.info("Loaded from dict.")
-        return result["data"]
+    result_data = trending_stocks_and_news_result.get("data")
+    updated_at = trending_stocks_and_news_result.get("updated_at")
+    if result_data and time() - updated_at < 600:
+        logging.info(f"Loaded from dict. \n{result_data}")
+        return result_data
 
+    # get tickers and news
     tickers: list[str] | None = get_top_trending_tickers.remote(num_stocks)
     if tickers is None:
         raise ValueError("No tickers found")
-
     ticker_desc = [yf.Ticker(ticker).info.get("shortName") for ticker in tickers]
-
-    list_of_ticker_news = list(ddgs_news.map(tickers, ticker_desc))
-
-    logging.info(list_of_ticker_news)
+    news: list[list[dict]] = list(ddgs_news.map(tickers, ticker_desc))
+    ticker_news_pairs = list(zip(tickers, news))
+    logging.info(f"Ticker news pairs:\n{ticker_news_pairs}")
 
     # save to dict
-    trending_stocks_and_news_results["trending_stocks_and_news"] = {
-        "updated_at": time(),
-        "data": list_of_ticker_news,
-    }
+    trending_stocks_and_news_result["data"] = ticker_news_pairs
+    trending_stocks_and_news_result["updated_at"] = time()
     logging.info("Saved to dict.")
 
-    return list_of_ticker_news
+    return ticker_news_pairs

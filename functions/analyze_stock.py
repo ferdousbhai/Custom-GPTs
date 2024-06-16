@@ -21,14 +21,14 @@ ddgs_news = Function.lookup("ddgs-news", "ddgs_news")
 @web_endpoint()
 async def generate_investment_report(
     ticker_to_research: str, token: HTTPAuthorizationCredentials = Depends(auth_scheme)
-) -> str:
+) -> dict:
     """
     Generate an investment report for a given ticker.
     This function generates a report with the following sections:
     - Ticker Info
-    - Ticker News
+    - Latest News
     - Analyst Recommendations
-    - Top 20 Upgrades/Downgrades
+    - Upgrades/Downgrades
     The data is pulled from yfinance and ddgs.
     """
     import yfinance as yf
@@ -45,32 +45,29 @@ async def generate_investment_report(
     # Ticker object
     ticker = yf.Ticker(ticker_to_research)
 
-    # Placeholder for all inputs passed to the assistant
-    report = []
+    result = {}
 
     # Get ticker info from yfinance
     if ticker.info:
-        report.append("Ticker Info:\n" + str(ticker.info))
+        result["ticker_info"] = ticker.info
 
     # Get news from ddgs
-    ticker_news = ddgs_news.remote(ticker_to_research, ticker.info.get("shortName"))
-    logging.info("Fetched news")
-
-    if ticker_news:
-        report.append("Ticker News:\n" + str(ticker_news))
+    ticker_news_list = await ddgs_news.remote.aio(
+        ticker_to_research, ticker.info.get("shortName")
+    )
+    if ticker_news_list:
+        logging.info("Fetched news")
+        result["latest_news"] = ticker_news_list
 
     # Get analyst recommendations from yfinance
     if not ticker.recommendations.empty:  # recommendations is a DataFrame
         logging.info("Fetched analyst recommendations")
-        report.append("Analyst Recommendations:\n" + ticker.recommendations.to_string())
+        result["analyst_recommendations"] = ticker.recommendations.to_json()
 
     # Get upgrades and downgrades from yfinance
     if not ticker.upgrades_downgrades.empty:  # upgrades_downgrades is a DataFrame
         logging.info("Fetched upgrades and downgrades")
-        report.append(
-            "Upgrades/Downgrades:\n" + ticker.upgrades_downgrades.head(20).to_string()
-        )
+        result["upgrades_downgrades"] = ticker.upgrades_downgrades.head(20).to_json()
 
-    final_report = "\n\n".join(report)
-    logging.info(f"Generated report for ticker: {ticker_to_research}:\n{final_report}")
-    return final_report
+    logging.info(f"Generated report for ticker: {ticker_to_research}:\n{result}")
+    return result

@@ -26,13 +26,14 @@ trending_stocks_and_news_result = Dict.from_name(
 
 
 @app.function(image=httpx_image)
-async def get_top_trending_tickers(num_stocks: int) -> list[str] | None:
+async def get_top_trending_tickers(
+    num_stocks: int, filter: str = "wallstreetbets"
+) -> list[str] | None:
     """
     Get the top trending stocks from ApeWisdom
     """
     import httpx
 
-    filter = "wallstreetbets"
     url = f"https://apewisdom.io/api/v1.0/filter/{filter}"
 
     try:

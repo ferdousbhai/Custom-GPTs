@@ -9,7 +9,7 @@ logging.basicConfig(level=logging.INFO)
 app = App("stock-analysis")
 
 finance_image = Image.debian_slim(python_version="3.12").run_commands(
-    "pip install httpx yfinance tabulate"
+    "pip install httpx yfinance"
 )
 
 auth_scheme = HTTPBearer()
@@ -73,7 +73,7 @@ async def generate_investment_report(
         result["upgrades_downgrades"] = ticker.upgrades_downgrades.head(20).to_json()
 
     # Get options
-    options: list[list[dict]] = get_options.remote(ticker_to_research, num_options=6)
+    options: list[list[dict]] = get_options.remote(ticker_to_research)
     if options:
         logging.info("Fetched options")
         result["options"] = options

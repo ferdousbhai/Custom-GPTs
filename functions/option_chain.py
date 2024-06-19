@@ -31,7 +31,7 @@ def parse_option_symbol(symbol: str):
 
 @app.function(image=yfinance_image)
 def get_options(
-    ticker_symbol: str, sort_by: str = "openInterest", num_options: int = 4
+    ticker_symbol: str, sort_by: str = "openInterest", num_options: int = 12
 ) -> list[dict]:
     import pandas as pd
     import yfinance as yf
@@ -58,8 +58,10 @@ def get_options(
             )
             recommended_options.append(
                 {
-                    "option": f"{ticker} {strike_price}{option_type} {expiry_date.strftime("%-m/%-d/%y")}",
-                    "ask": option["ask"],
+                    "optionDescription": f"{ticker} {strike_price}{option_type} {expiry_date.strftime("%-m/%-d/%y")}",
+                    "price": option["ask"] + option["bid"] / 2,
+                    "open_interest": option["openInterest"],
+                    "volume": option["volume"],
                 }
             )
 

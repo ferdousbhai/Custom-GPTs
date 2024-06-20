@@ -56,14 +56,21 @@ def get_options(
             ticker, strike_price, option_type, expiry_date = parse_option_symbol(
                 option["contractSymbol"]
             )
-            recommended_options.append(
-                {
-                    "optionDescription": f"{ticker} {strike_price}{option_type} {expiry_date.strftime("%-m/%-d/%y")}",
-                    "price": option["ask"] + option["bid"] / 2,
-                    "open_interest": option["openInterest"],
-                    "volume": option["volume"],
-                }
-            )
+            option_dict = {
+                "optionDescription": f"{ticker} {strike_price}{option_type} {expiry_date.strftime('%-m/%-d/%y')}",
+                "open_interest": option["openInterest"],
+            }
+
+            # Calculate price if both 'ask' and 'bid' are not None and greater than 0
+            if option.get("ask", 0) > 0 and option.get("bid", 0) > 0:
+                price = round((option["ask"] + option["bid"]) / 2, 2)
+                option_dict["price"] = price
+
+            # Include volume if it is not None and greater than 0
+            if option.get("volume", 0) > 0:
+                option_dict["volume"] = option["volume"]
+
+            recommended_options.append(option_dict)
 
         return recommended_options
 

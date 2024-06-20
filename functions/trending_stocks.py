@@ -25,6 +25,10 @@ trending_stocks_and_news_result = Dict.from_name(
 )
 
 
+def sort_stocks(data, key, num_stocks):
+    return sorted(data, key=lambda item: item[key], reverse=True)[:num_stocks]
+
+
 @app.function(image=httpx_image)
 async def get_top_trending_tickers(
     num_stocks: int, filter: str = "wallstreetbets"
@@ -51,17 +55,10 @@ async def get_top_trending_tickers(
         logging.error("Failed to decode JSON")
         return None
 
-    def sort_stocks(data, key, num_stocks):
-        return sorted(data, key=lambda item: item[key], reverse=True)[:num_stocks]
-
     most_upvoted = sort_stocks(data["results"], "upvotes", num_stocks)
     most_mentions = sort_stocks(data["results"], "mentions", num_stocks)
 
-    trending_stocks = {
-        item["ticker"]: item for item in most_upvoted + most_mentions
-    }.values()
-
-    return [stock["ticker"] for stock in trending_stocks]
+    return list({stock["ticker"]: stock for stock in most_upvoted + most_mentions})
 
 
 @app.function(
@@ -71,7 +68,7 @@ async def get_top_trending_tickers(
 @web_endpoint()
 def get_trending_stocks_and_news(
     num_stocks: int = 6, token: HTTPAuthorizationCredentials = Depends(auth_scheme)
-) -> tuple[list[tuple[str, list[dict]]], str]:
+) -> tuple[list[tuple[str, list[str], list[dict]]], str]:
     """
     Get the top news for each ticker
     """
@@ -102,6 +99,8 @@ def get_trending_stocks_and_news(
     if tickers is None:
         raise ValueError("No tickers found")
     ticker_desc = [yf.Ticker(ticker).info.get("shortName") for ticker in tickers]
+    # Replace NaN values in ticker descriptions
+
     news: list[list[dict]] = list(ddgs_news.map(tickers, ticker_desc))
     options: list[list[dict]] = list(get_options.map(tickers))
 

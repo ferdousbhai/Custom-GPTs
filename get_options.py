@@ -30,49 +30,54 @@ def parse_option_symbol(symbol: str):
 
 
 @app.function(image=yfinance_image)
-def get_options(
-    ticker_symbol: str, sort_by: str = "openInterest", num_options: int = 12
-) -> list[dict]:
+def get_options(ticker_symbol: str, num_options: int = 6) -> list[dict]:
+    """Get the options with the highest open interest for a given ticker symbol."""
     import pandas as pd
     import yfinance as yf
 
     try:
         ticker = yf.Ticker(ticker_symbol)
         expiration_dates = ticker.options
+        all_options_df = pd.concat(
+            [
+                pd.concat(
+                    [
+                        ticker.option_chain(expiration).calls,
+                        ticker.option_chain(expiration).puts,
+                    ]
+                )
+                for expiration in expiration_dates
+            ],
+            ignore_index=True,
+        )
+        all_options_df["price"] = (all_options_df["ask"] + all_options_df["bid"]) / 2
 
-        all_options_df = pd.DataFrame()
+        top_options = (
+            all_options_df.sort_values(by=["openInterest"], ascending=False)
+            .head(num_options)
+            .to_dict("records")
+        )
+        logging.info(f"Top options:\n{top_options}")
 
-        for expiration in expiration_dates:
-            options = ticker.option_chain(expiration)
-            puts_and_calls = pd.concat([options.calls, options.puts])
-            all_options_df = pd.concat([all_options_df, puts_and_calls])
-
-        logging.info(f"All options:\n{all_options_df}")
-        sorted_options = all_options_df.sort_values(by=sort_by, ascending=False)
-        top_options = sorted_options.head(num_options).to_dict("records")
-
-        recommended_options = []
+        result = []
         for option in top_options:
             ticker, strike_price, option_type, expiry_date = parse_option_symbol(
                 option["contractSymbol"]
             )
-            option_dict = {
+            option_data = {
                 "optionDescription": f"{ticker} {strike_price}{option_type} {expiry_date.strftime('%-m/%-d/%y')}",
-                "open_interest": option["openInterest"],
+                "openInterest": option["openInterest"],
             }
-
-            # Calculate price if both 'ask' and 'bid' are not None and greater than 0
             if option.get("ask", 0) > 0 and option.get("bid", 0) > 0:
-                price = round((option["ask"] + option["bid"]) / 2, 2)
-                option_dict["price"] = price
-
-            # Include volume if it is not None and greater than 0
+                option_data["price"] = round(option["price"], 2)
+            if option.get("impliedVolatility", 0) > 0:
+                option_data["impliedVolatility"] = (
+                    f"{round(option['impliedVolatility'] * 100, 2)}%"
+                )
             if option.get("volume", 0) > 0:
-                option_dict["volume"] = option["volume"]
-
-            recommended_options.append(option_dict)
-
-        return recommended_options
+                option_data["volume"] = option["volume"]
+            result.append(option_data)
+        return result
 
     except Exception as e:
         logging.error(f"Error getting options: {e}")

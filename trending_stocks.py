@@ -17,11 +17,11 @@ yfinance_image = Image.debian_slim(python_version="3.12").run_commands(
 
 auth_scheme = HTTPBearer()
 
-ddgs_news = Function.lookup("ddgs-news", "ddgs_news")
+get_ddgs_news = Function.lookup("ddgs-news", "get_ddgs_news")
 get_options = Function.lookup("get-options", "get_options")
 
-trending_stocks_and_news_result = Dict.from_name(
-    "trending_stocks_and_news_result", create_if_missing=True
+trending_stocks_and_news_results = Dict.from_name(
+    "trending_stocks_and_news_results", create_if_missing=True
 )
 
 
@@ -84,8 +84,8 @@ def get_trending_stocks_and_news(
         )
 
     # check if cached result is valid
-    result_data = trending_stocks_and_news_result.get("data")
-    updated_at = trending_stocks_and_news_result.get("updated_at")
+    result_data = trending_stocks_and_news_results.get("data")
+    updated_at = trending_stocks_and_news_results.get("updated_at")
     if result_data and time() - updated_at < 600:
         logging.info(f"Loaded from dict. \n{result_data}")
         return (
@@ -101,7 +101,7 @@ def get_trending_stocks_and_news(
     ticker_desc = [yf.Ticker(ticker).info.get("shortName") for ticker in tickers]
     # Replace NaN values in ticker descriptions
 
-    news: list[list[dict]] = list(ddgs_news.map(tickers, ticker_desc))
+    news: list[list[dict]] = list(get_ddgs_news.map(tickers, ticker_desc))
     options: list[list[dict]] = list(get_options.map(tickers))
 
     # zip the tickers, news, and options
@@ -109,9 +109,9 @@ def get_trending_stocks_and_news(
     logging.info(f"Ticker news pairs:\n{ticker_news_options_pairs}")
 
     # save to dict
-    trending_stocks_and_news_result["data"] = ticker_news_options_pairs
+    trending_stocks_and_news_results["data"] = ticker_news_options_pairs
     timestamp = time()
-    trending_stocks_and_news_result["updated_at"] = timestamp
+    trending_stocks_and_news_results["updated_at"] = timestamp
     logging.info("Saved to dict.")
 
     return (

@@ -14,7 +14,7 @@ ddgs_news_results = Dict.from_name("ddgs_news_results", create_if_missing=True)
 
 
 @app.function(image=ddgs_image)
-async def ddgs_news(
+async def get_ddgs_news(
     search_term: str,
     search_description: str | None = None,
     max_results: int = 6,

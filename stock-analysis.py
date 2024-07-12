@@ -14,7 +14,7 @@ finance_image = Image.debian_slim(python_version="3.12").run_commands(
 
 auth_scheme = HTTPBearer()
 
-ddgs_news = Function.lookup("ddgs-news", "ddgs_news")
+get_ddgs_news = Function.lookup("ddgs-news", "get_ddgs_news")
 get_options = Function.lookup("get-options", "get_options")
 
 
@@ -30,6 +30,7 @@ async def generate_investment_report(
     - Latest News
     - Analyst Recommendations
     - Upgrades/Downgrades
+    - Options
     The data is pulled from yfinance and ddgs.
     """
     import yfinance as yf
@@ -55,7 +56,7 @@ async def generate_investment_report(
         result["tickerInfo"] = ticker.info
 
     # Get news from ddgs
-    ticker_news_list = await ddgs_news.remote.aio(
+    ticker_news_list = await get_ddgs_news.remote.aio(
         ticker_to_research, ticker.info.get("shortName")
     )
     if ticker_news_list:

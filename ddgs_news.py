@@ -13,7 +13,7 @@ ddgs_image = Image.debian_slim(python_version="3.12").run_commands(
 ddgs_news_results = Dict.from_name("ddgs_news_results", create_if_missing=True)
 
 
-@app.function(image=ddgs_image)
+@app.function(image=ddgs_image, keep_warm=1)
 async def get_ddgs_news(
     search_term: str,
     search_description: str | None = None,
@@ -63,7 +63,8 @@ async def get_ddgs_news(
     return news_list
 
 
-# @app.local_entrypoint()
-# async def main():
-#     result = await ddgs_news.remote.aio("NVDA", "NVIDIA")
-#     print(result)
+# testing
+@app.local_entrypoint()
+async def test():
+    result = await get_ddgs_news.remote.aio("NVDA", "NVIDIA")
+    print(result)

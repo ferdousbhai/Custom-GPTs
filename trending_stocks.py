@@ -1,6 +1,7 @@
 from modal import App, Image, Secret, Function, Dict, web_endpoint
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from datetime import datetime, timedelta
 import os
 import logging
 
@@ -20,13 +21,11 @@ auth_scheme = HTTPBearer()
 get_ddgs_news = Function.lookup("ddgs-news", "get_ddgs_news")
 get_options = Function.lookup("get-options", "get_options")
 
-trending_stocks_and_news_results = Dict.from_name(
-    "trending_stocks_and_news_results", create_if_missing=True
-)
+tickers_dict = Dict.from_name("tickers", create_if_missing=True)
 
 
-def sort_stocks(data, key, num_stocks):
-    return sorted(data, key=lambda item: item[key], reverse=True)[:num_stocks]
+def sort_stocks(data, key):
+    return sorted(data, key=lambda item: item[key], reverse=True)
 
 
 @app.function(image=httpx_image)
@@ -39,6 +38,17 @@ async def get_top_trending_tickers(
     import httpx
 
     url = f"https://apewisdom.io/api/v1.0/filter/{filter}"
+
+    try:
+        if (
+            tickers_dict["trending"]
+            and len(tickers_dict["trending"]) >= num_stocks
+            and datetime.now() - tickers_dict["last_updated"] < timedelta(minutes=10)
+        ):
+            logging.info("Loaded from dict.")
+            return tickers_dict["trending"][:num_stocks]
+    except KeyError:
+        logging.info("No cached result found.")
 
     try:
         async with httpx.AsyncClient() as client:
@@ -55,15 +65,24 @@ async def get_top_trending_tickers(
         logging.error("Failed to decode JSON")
         return None
 
-    most_upvoted = sort_stocks(data["results"], "upvotes", num_stocks)
-    most_mentions = sort_stocks(data["results"], "mentions", num_stocks)
+    most_upvoted = sort_stocks(data["results"], "upvotes")[:num_stocks]
+    most_mentions = sort_stocks(data["results"], "mentions")[:num_stocks]
 
-    return list({stock["ticker"]: stock for stock in most_upvoted + most_mentions})
+    top_trending_tickers = list(
+        {stock["ticker"] for stock in most_upvoted + most_mentions}
+    )
+
+    # save to dict
+    tickers_dict["trending"] = top_trending_tickers
+    tickers_dict["last_updated"] = datetime.now()
+
+    return top_trending_tickers
 
 
 @app.function(
     image=yfinance_image,
     secrets=[Secret.from_name("auth-token")],
+    keep_warm=1,
 )
 @web_endpoint()
 def get_trending_stocks_and_news(
@@ -72,8 +91,6 @@ def get_trending_stocks_and_news(
     """
     Get the top news for each ticker
     """
-    from time import time
-    from datetime import datetime
     import yfinance as yf
 
     if token.credentials != os.environ["AUTH_TOKEN"]:
@@ -83,17 +100,6 @@ def get_trending_stocks_and_news(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # check if cached result is valid
-    result_data = trending_stocks_and_news_results.get("data")
-    updated_at = trending_stocks_and_news_results.get("updated_at")
-    if result_data and time() - updated_at < 600:
-        logging.info(f"Loaded from dict. \n{result_data}")
-        return (
-            result_data,
-            f"Last updated: {datetime.fromtimestamp(updated_at).strftime('%Y-%m-%d %H:%M')}",
-        )
-
-    # get tickers, news, and options
     tickers: list[str] | None = get_top_trending_tickers.remote(num_stocks)
     logging.info(f"Tickers: {tickers}")
     if tickers is None:
@@ -108,13 +114,14 @@ def get_trending_stocks_and_news(
     ticker_news_options_pairs = list(zip(tickers, news, options))
     logging.info(f"Ticker news pairs:\n{ticker_news_options_pairs}")
 
-    # save to dict
-    trending_stocks_and_news_results["data"] = ticker_news_options_pairs
-    timestamp = time()
-    trending_stocks_and_news_results["updated_at"] = timestamp
-    logging.info("Saved to dict.")
-
     return (
         ticker_news_options_pairs,
-        f"Current time: {datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M')}",
+        f"Current time: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
     )
+
+
+# testing
+@app.local_entrypoint()
+def test():
+    result = get_top_trending_tickers.remote(num_stocks=10)
+    print(result)

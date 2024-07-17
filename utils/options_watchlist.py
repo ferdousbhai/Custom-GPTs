@@ -31,4 +31,4 @@ def remove_from_watchlist(tickers: list[str]):
 
 
 if __name__ == "__main__":
-    # add_to_watchlist(tickers=["TSM"])
+    add_to_watchlist(tickers=["ASML"])

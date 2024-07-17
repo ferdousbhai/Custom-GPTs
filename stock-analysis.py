@@ -8,7 +8,7 @@ logging.basicConfig(level=logging.INFO)
 
 app = App("stock-analysis")
 
-finance_image = Image.debian_slim(python_version="3.12").run_commands(
+image = Image.debian_slim(python_version="3.12").run_commands(
     "pip install httpx yfinance"
 )
 
@@ -18,7 +18,7 @@ get_ddgs_news = Function.lookup("ddgs-news", "get_ddgs_news")
 get_options = Function.lookup("get-options", "get_options")
 
 
-@app.function(image=finance_image, secrets=[Secret.from_name("auth-token")])
+@app.function(image=image, secrets=[Secret.from_name("auth-token")], keep_warm=1)
 @web_endpoint()
 async def generate_investment_report(
     ticker_to_research: str, token: HTTPAuthorizationCredentials = Depends(auth_scheme)

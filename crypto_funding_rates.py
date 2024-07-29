@@ -2,7 +2,7 @@ import os
 import modal
 import logging
 import json
-import websockets
+
 
 logging.basicConfig(level=logging.INFO)
 
@@ -29,6 +29,8 @@ def create_message(ticker: str) -> dict:
 
 @app.function(image=websockets_image, secrets=[modal.Secret.from_name("telegram")])
 async def get_funding_rate(ticker: str) -> float | None:
+    import websockets
+
     msg = create_message(ticker)
     try:
         async with websockets.connect(WEBSOCKET_URL) as websocket:

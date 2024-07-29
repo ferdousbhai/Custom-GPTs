@@ -1,9 +1,11 @@
-from modal import App, Image, Secret, Function, Dict, web_endpoint
+from modal import App, Image, Secret, Function, Dict, web_endpoint, Cron
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from datetime import datetime, timedelta
 import os
 import logging
+
+from utils.options_watchlist import add_to_watchlist
 
 
 logging.basicConfig(level=logging.INFO)
@@ -120,8 +122,16 @@ def get_trending_stocks_and_news(
     )
 
 
+# add trending stocks to watchlist
+@app.function(schedule=Cron("0 9 * * *"))
+def add_trending_stocks_to_watchlist():
+    tickers = get_top_trending_tickers.remote(num_stocks=10)
+    add_to_watchlist(tickers=tickers)
+
+
 # testing
 @app.local_entrypoint()
 def test():
-    result = get_top_trending_tickers.remote(num_stocks=10)
-    print(result)
+    # result = get_top_trending_tickers.remote(num_stocks=10)
+    # print(result)
+    add_trending_stocks_to_watchlist.remote()

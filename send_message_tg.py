@@ -1,14 +1,14 @@
-import modal
+from modal import App, Image
+
 from utils.markdown_v2_formatter import convert_to_markdown_v2
 
-app = modal.App("send-message-to-tg-channel")
+app = App("send-message-to-tg")
 
-telegram_image = modal.Image.debian_slim(python_version="3.12").run_commands(
-    ["pip install python-telegram-bot"]
+
+@app.function(
+    image=Image.debian_slim(python_version="3.12").pip_install("python-telegram-bot"),
+    keep_warm=1,
 )
-
-
-@app.function(image=telegram_image)
 async def send_message(bot_token: str, chat_id: int, text: str):
     from telegram import Bot
 

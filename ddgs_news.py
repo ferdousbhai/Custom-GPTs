@@ -6,14 +6,13 @@ logging.basicConfig(level=logging.INFO)
 
 app = App("ddgs-news")
 
-ddgs_image = Image.debian_slim(python_version="3.12").run_commands(
-    "pip install duckduckgo_search"
-)
-
 ddgs_news_results = Dict.from_name("ddgs_news_results", create_if_missing=True)
 
 
-@app.function(image=ddgs_image, keep_warm=1)
+@app.function(
+    image=Image.debian_slim(python_version="3.12").pip_install("duckduckgo_search"),
+    keep_warm=1,
+)
 async def get_ddgs_news(
     search_term: str,
     search_description: str | None = None,

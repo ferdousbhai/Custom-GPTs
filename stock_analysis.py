@@ -1,8 +1,11 @@
-from modal import App, Image, Secret, Function, web_endpoint
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import os
 import logging
+from datetime import datetime, timedelta
+
+from modal import App, Image, Secret, Function, Dict, web_endpoint
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+
 
 logging.basicConfig(level=logging.INFO)
 
@@ -12,17 +15,16 @@ image = Image.debian_slim(python_version="3.12").run_commands(
     "pip install httpx yfinance"
 )
 
+stock_analysis_dict = Dict.from_name("stock-analysis-data", create_if_missing=True)
+
 auth_scheme = HTTPBearer()
 
 get_ddgs_news = Function.lookup("ddgs-news", "get_ddgs_news")
 get_options = Function.lookup("get-options", "get_options")
 
 
-@app.function(image=image, secrets=[Secret.from_name("auth-token")], keep_warm=1)
-@web_endpoint()
-async def generate_investment_report(
-    ticker_to_research: str, token: HTTPAuthorizationCredentials = Depends(auth_scheme)
-) -> tuple[dict, str]:
+@app.function(image=image, keep_warm=1)
+async def generate_investment_report(ticker_to_research: str) -> dict:
     """
     Generate an investment report for a given ticker.
     This function generates a report with the following sections:
@@ -34,15 +36,6 @@ async def generate_investment_report(
     The data is pulled from yfinance and ddgs.
     """
     import yfinance as yf
-    from datetime import datetime
-    from time import time
-
-    if token.credentials != os.environ["AUTH_TOKEN"]:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect bearer token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
 
     logging.info(f"Generating report for: {ticker_to_research}")
 
@@ -79,8 +72,40 @@ async def generate_investment_report(
         logging.info("Fetched options")
         result["options"] = options
 
-    logging.info(f"Generated report for ticker: {ticker_to_research}:\n{result}")
-    return (
-        result,
-        f"Current time: {datetime.fromtimestamp(time()).strftime('%Y-%m-%d %H:%M')}",
-    )
+    logging.info(f"Generated report for {ticker_to_research}")
+    return result
+
+
+@app.function(secrets=[Secret.from_name("auth-token")], keep_warm=1)
+@web_endpoint()
+async def endpoint(
+    ticker_to_research: str, token: HTTPAuthorizationCredentials = Depends(auth_scheme)
+) -> dict:
+    if token.credentials != os.environ["AUTH_TOKEN"]:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect bearer token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    if ticker_to_research not in stock_analysis_dict:
+        stock_analysis_dict[ticker_to_research] = {"report": None, "timestamp": None}
+
+    if (
+        stock_analysis_dict[ticker_to_research]["report"] is None
+        or stock_analysis_dict[ticker_to_research]["timestamp"] is None
+        or datetime.now() - stock_analysis_dict[ticker_to_research]["timestamp"]
+        > timedelta(minutes=10)
+    ):
+        stock_analysis_dict[ticker_to_research] = {
+            "report": generate_investment_report.remote(ticker_to_research),
+            "timestamp": datetime.now(),
+        }
+        logging.info(f"Updated report for {ticker_to_research}")
+
+    return stock_analysis_dict[ticker_to_research]
+
+
+@app.local_entrypoint()
+def test():
+    print(generate_investment_report.remote("AAPL"))

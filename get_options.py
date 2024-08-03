@@ -1,5 +1,5 @@
-from modal import App, Image
-from datetime import date, datetime
+from modal import App, Image, Dict
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 import logging
 
@@ -7,10 +7,11 @@ logging.basicConfig(level=logging.INFO)
 
 app = App("get-options")
 
-
 image = Image.debian_slim(python_version="3.12").run_commands(
     "pip install pandas yfinance tabulate"
 )
+
+options_dict = Dict.from_name("options-data", create_if_missing=True)
 
 
 def parse_option_symbol(symbol: str):
@@ -48,7 +49,7 @@ def get_options(
     price_target (Decimal, optional): The target price to filter options by strike price.
 
     Returns:
-    str | None: A string containing the options table. Returns None if an error occurs.
+    str: A string containing the options table.
 
     Example:
     get_options("AAPL", 20, date(2024, 1, 1), date(2024, 12, 31), Decimal(200))
@@ -56,6 +57,17 @@ def get_options(
     import pandas as pd
     import yfinance as yf
     from tabulate import tabulate
+
+    try:
+        if ticker_symbol in options_dict and datetime.now() - options_dict[
+            ticker_symbol
+        ]["updated_at"] < timedelta(minutes=1):
+            logging.info(f"Found cached options for {ticker_symbol}")
+            return options_dict[ticker_symbol]
+    except Exception as e:
+        logging.info(
+            f"Error retrieving options for {ticker_symbol}: {e}. Retrieving from Yahoo Finance."
+        )
 
     try:
         ticker = yf.Ticker(ticker_symbol)
@@ -127,12 +139,15 @@ def get_options(
                 "Price",
             ]
             table = tabulate(result, headers, tablefmt="plain")
+            options_dict[ticker_symbol] = {
+                "data": table,
+                "updated_at": datetime.now(),
+            }
         logging.info(table)
-        return table
+        return options_dict[ticker_symbol]["data"]
 
     except Exception as e:
-        logging.error(f"Error getting options: {e}")
-        return None
+        raise e
 
 
 # testing

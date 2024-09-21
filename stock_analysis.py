@@ -10,13 +10,8 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 logging.basicConfig(level=logging.INFO)
 
 app = App("stock-analysis")
-
-image = Image.debian_slim(python_version="3.12").run_commands(
-    "pip install httpx yfinance"
-)
-
+image = Image.debian_slim().pip_install("httpx", "yfinance")
 stock_analysis_dict = Dict.from_name("stock-analysis-data", create_if_missing=True)
-
 auth_scheme = HTTPBearer()
 
 get_ddgs_news = Function.lookup("ddgs-news", "get_ddgs_news")
@@ -41,37 +36,27 @@ async def generate_investment_report(ticker_to_research: str) -> dict:
 
     ticker = yf.Ticker(ticker_to_research)
 
-    result = {}
+    result = {"tickerInfo": ticker.info} if ticker.info else {}
 
-    # Get ticker info from yfinance
-    if ticker.info:
-        result["tickerInfo"] = ticker.info
-
-    # Get news from ddgs
-    ticker_news_list = await get_ddgs_news.remote.aio(
+    # Fetch news
+    if news := await get_ddgs_news.remote.aio(
         ticker_to_research, ticker.info.get("shortName")
-    )
-    if ticker_news_list:
+    ):
         logging.info("Fetched news")
-        result["latest_news"] = ticker_news_list
+        result["latest_news"] = news
 
-    # Get analyst recommendations from yfinance
-    if not ticker.recommendations.empty:  # recommendations is a DataFrame
-        logging.info("Fetched analyst recommendations")
-        result["analyst_recommendations"] = ticker.recommendations.to_dict(
-            orient="records"
-        )
+    # Fetch recommendations
+    for attr, key in [
+        ("recommendations", "analyst_recommendations"),
+        ("upgrades_downgrades", "upgrades_downgrades"),
+    ]:
+        df = getattr(ticker, attr)
+        if not df.empty:
+            logging.info(f"Fetched {key.replace('_', ' ')}")
+            result[key] = df.head(20).to_dict(orient="records")
 
-    # Get upgrades and downgrades from yfinance
-    if not ticker.upgrades_downgrades.empty:  # upgrades_downgrades is a DataFrame
-        logging.info("Fetched upgrades and downgrades")
-        result["upgrades_downgrades"] = ticker.upgrades_downgrades.head(20).to_dict(
-            orient="records"
-        )
-
-    # Get options
-    options: list[list[dict]] = get_options.remote(ticker_to_research)
-    if options:
+    # Fetch options
+    if options := get_options.remote(ticker_to_research):
         logging.info("Fetched options")
         result["options"] = options
 
@@ -91,22 +76,23 @@ async def endpoint(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    if ticker_to_research not in stock_analysis_dict:
-        stock_analysis_dict[ticker_to_research] = {"report": None, "timestamp": None}
-
+    entry = stock_analysis_dict.setdefault(
+        ticker_to_research, {"report": None, "timestamp": None}
+    )
     if (
-        stock_analysis_dict[ticker_to_research]["report"] is None
-        or stock_analysis_dict[ticker_to_research]["timestamp"] is None
-        or datetime.now() - stock_analysis_dict[ticker_to_research]["timestamp"]
-        > timedelta(minutes=10)
+        entry["report"] is None
+        or entry["timestamp"] is None
+        or datetime.now() - entry["timestamp"] > timedelta(minutes=10)
     ):
-        stock_analysis_dict[ticker_to_research] = {
-            "report": generate_investment_report.remote(ticker_to_research),
-            "timestamp": datetime.now(),
-        }
+        entry.update(
+            {
+                "report": generate_investment_report.remote(ticker_to_research),
+                "timestamp": datetime.now(),
+            }
+        )
         logging.info(f"Updated report for {ticker_to_research}")
 
-    return stock_analysis_dict[ticker_to_research]
+    return entry
 
 
 @app.local_entrypoint()

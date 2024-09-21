@@ -12,21 +12,21 @@ def fetch_bitcoin_fear_and_greed():
 
     url = "https://api.alternative.me/fng/"
 
-    response = httpx.get(url)
-    logging.info(f"Response status: {response.status_code}")
+    try:
+        with httpx.Client() as client:
+            response = client.get(url)
+            response.raise_for_status()
+            data = response.json()["data"][0]
+            score, rating = int(data["value"]), data["value_classification"]
+            logging.info(f"Bitcoin Fear and Greed: {score}, {rating}")
+            return score, rating
+    except httpx.HTTPStatusError as e:
+        logging.error(f"HTTP error occurred: {e}")
+    except Exception as e:
+        logging.error(f"An error occurred: {e}")
+    return None
 
-    if response.status_code == 200:
-        response = response.json()
-        data = response.get("data", {})
-        score, rating = int(data[0]["value"]), data[0]["value_classification"]
-        logging.info(f"Bitcoin Fear and Greed: {score}, {rating}")
-        return (score, rating)
-    else:
-        logging.error(f"Failed to fetch data: {response.text}")
-        return None
 
-
-# testing
 @app.local_entrypoint()
 def test():
     fetch_bitcoin_fear_and_greed.remote()

@@ -1,6 +1,5 @@
 import os
 import logging
-from typing import Iterable
 from datetime import date, datetime, timedelta
 
 import modal
@@ -49,45 +48,39 @@ def get_tastytrade_session():
     return tastytrade_dict["session"]
 
 
-def get_current_position_symbols(session) -> Iterable[str]:
+def get_current_position_symbols(session) -> set[str]:
     from tastytrade import Account
     from tastytrade.utils import TastytradeError
 
     try:
         account = Account.get_account(session, os.getenv("TASTYTRADE_ACCOUNT"))
     except TastytradeError:
-        account = Account.get_accounts(session)[0]
+        accounts = Account.get_accounts(session)
+        if not accounts:
+            raise ValueError("No accounts found for the given session.")
+        account = accounts[0]
 
     current_positions = account.get_positions(session)
 
-    return {
-        current_position.underlying_symbol for current_position in current_positions
-    }
+    # return the set of underlying symbols
+    return {position.underlying_symbol for position in current_positions}
 
 
 def iv_rank_filter(
     iv_rank: str | None, min_iv_rank: float = 0.2, max_iv_rank: float = 0.8
 ) -> bool:
-    if iv_rank is None:
-        return False
-    try:
-        rank = float(iv_rank)
-        return rank < min_iv_rank or rank > max_iv_rank
-    except ValueError:
-        return False
+    return iv_rank is not None and min_iv_rank <= float(iv_rank) <= max_iv_rank
 
 
 @app.function(
     image=tastytrade_image,
     secrets=[modal.Secret.from_name("tastytrade")],
 )
-def main(required_tickers: list[str] = ()):
+def generate_report(required_tickers: list[str] = ()):
     from decimal import Decimal
     import pytz
-
     import tastytrade
 
-    # instead of chekcing "watchlist", it should check "volatily_report_data" for cacheing
     try:
         if (
             "volatility_report" in tastytrade_dict
@@ -114,17 +107,16 @@ def main(required_tickers: list[str] = ()):
         )
 
         # Filter and sort metrics
-        filtered_metrics = list(
-            filter(
-                lambda x: iv_rank_filter(x.implied_volatility_index_rank)
-                or x.symbol in current_position_symbols
-                or (
-                    x.symbol in required_tickers
-                    and x.implied_volatility_index_rank is not None
-                ),
-                watchlist_metrics,
+        filtered_metrics = [
+            x
+            for x in watchlist_metrics
+            if iv_rank_filter(x.implied_volatility_index_rank)
+            or x.symbol in current_position_symbols
+            or (
+                x.symbol in required_tickers
+                and x.implied_volatility_index_rank is not None
             )
-        )
+        ]
         sorted_metrics = sorted(
             filtered_metrics,
             key=lambda x: float(x.implied_volatility_index_rank or 0),
@@ -132,22 +124,19 @@ def main(required_tickers: list[str] = ()):
         )
 
         def calculate_last_updated(updated_at: datetime) -> str:
-            if updated_at:
-                if updated_at.tzinfo is None:
-                    metric_time = pytz.UTC.localize(updated_at)
-                else:
-                    metric_time = updated_at.astimezone(pytz.UTC)
-
-                current_time = datetime.now(pytz.UTC)
-
-                time_difference = current_time - metric_time
-                if time_difference < timedelta(days=1):
-                    last_updated = f"{time_difference.seconds // 3600}h {(time_difference.seconds % 3600) // 60}m ago"
-                else:
-                    last_updated = f"{time_difference.days}d ago"
-                return last_updated
-            else:
+            if not updated_at:
                 return "N/A"
+            metric_time = (
+                updated_at.replace(tzinfo=pytz.UTC)
+                if updated_at.tzinfo is None
+                else updated_at.astimezone(pytz.UTC)
+            )
+            time_difference = datetime.now(pytz.UTC) - metric_time
+            return (
+                f"{time_difference.days}d ago"
+                if time_difference.days
+                else f"{time_difference.seconds // 3600}h {(time_difference.seconds % 3600) // 60}m ago"
+            )
 
         def calculate_days_to_earnings(
             metric: tastytrade.metrics.MarketMetricInfo,
@@ -330,7 +319,7 @@ def serve():
 
     @app.get("/", response_class=HTMLResponse)
     async def root():
-        report = main.remote()
+        report = generate_report.remote()
         return HTMLResponse(content=generate_html_content(report))
 
     @app.post("/refresh", response_class=HTMLResponse)
@@ -338,7 +327,7 @@ def serve():
         required_tickers = [
             ticker.strip() for ticker in tickers.split(",") if ticker.strip()
         ]
-        report = main.remote(required_tickers)
+        report = generate_report.remote(required_tickers)
         return HTMLResponse(content=generate_html_content(report, tickers))
 
     return app

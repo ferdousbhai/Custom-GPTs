@@ -1,6 +1,5 @@
 from modal import App, Image, Secret
 import logging
-import json
 
 logging.basicConfig(level=logging.INFO)
 
@@ -13,6 +12,7 @@ app = App("crypto-funding-rates")
 )
 async def get_crypto_funding_rates(ticker: str) -> float | None:
     import websockets
+    import json
 
     try:
         async with websockets.connect("wss://test.deribit.com/ws/api/v2") as websocket:
@@ -29,8 +29,7 @@ async def get_crypto_funding_rates(ticker: str) -> float | None:
                     }
                 )
             )
-            response = await websocket.recv()
-            data = json.loads(response)
+            data = json.loads(await websocket.recv())
             funding_rate = data["result"]["current_interest"]
             logging.info(f"{ticker} funding rate: {funding_rate:.4%}")
             return funding_rate
@@ -43,5 +42,5 @@ async def get_crypto_funding_rates(ticker: str) -> float | None:
 @app.local_entrypoint()
 def test():
     funding_rate = get_crypto_funding_rates.remote("BTC")
-    print(funding_rate)
-    print(type(funding_rate))
+    print(f"Funding rate: {funding_rate}")
+    print(f"Type: {type(funding_rate)}")

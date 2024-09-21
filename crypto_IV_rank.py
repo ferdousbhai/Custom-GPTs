@@ -26,40 +26,39 @@ def scrape_crypto_iv_rank(ticker: str) -> float | None:
 
         try:
             page.goto(f"https://www.deribit.com/statistics/{ticker}/volatility-index")
-
-            # Extract the IV Rank value based on the sibling relationship
             page.wait_for_selector("xpath=//span[contains(., 'IV Rank')]")
             iv_rank_element = page.query_selector(
                 "xpath=//span[contains(., 'IV Rank')]/following-sibling::h4"
             )
 
-            if iv_rank_element:
-                iv_rank_str = (
-                    iv_rank_element.inner_text().split(":")[-1].strip().rstrip("%")
-                )
-                iv_rank = float(iv_rank_str) / 100
-                logging.info(f"{ticker} IV Rank: {iv_rank:.1%}")
-                if iv_rank == 0:
-                    logging.error(
-                        f"{ticker} IV Rank is 0! The website structure might have changed."
-                    )
-                    return None
-
-            else:
+            if not iv_rank_element:
                 logging.info(
                     "IV Rank not found. The website structure might have changed."
                 )
                 return None
 
+            iv_rank = (
+                float(iv_rank_element.inner_text().split(":")[-1].strip().rstrip("%"))
+                / 100
+            )
+            logging.info(f"{ticker} IV Rank: {iv_rank:.1%}")
+
+            if iv_rank == 0:
+                logging.error(
+                    f"{ticker} IV Rank is 0! The website structure might have changed."
+                )
+                return None
+
+            return iv_rank
+
         except Exception as e:
-            print(f"An error occurred: {e}")
+            logging.error(f"An error occurred: {e}")
             return None
 
         finally:
             browser.close()
 
 
-# testing
 @app.local_entrypoint()
 def test():
     scrape_crypto_iv_rank.remote("BTC")

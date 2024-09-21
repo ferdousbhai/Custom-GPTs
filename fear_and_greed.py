@@ -21,23 +21,22 @@ def fetch_fear_and_greed():
         "Origin": "https://www.cnn.com",
     }
 
-    response = httpx.get(url, headers=headers)
-    logging.info(f"Response status: {response.status_code}")
+    try:
+        with httpx.Client() as client:
+            response = client.get(url, headers=headers)
+            response.raise_for_status()
+            data = response.json()
 
-    if response.status_code == 200:
-        data = response.json()
         fear_and_greed = data.get("fear_and_greed", {})
-        score, rating = (
-            int(fear_and_greed.get("score", {})),
-            fear_and_greed.get("rating", {}),
-        )
-        return (score, rating)
-    else:
-        logging.error(f"Failed to fetch data: {response.text}")
+        score = int(fear_and_greed.get("score", 0))
+        rating = fear_and_greed.get("rating")
+        logging.info(f"Fear and Greed score: {score}, rating: {rating}")
+        return score, rating
+    except (httpx.HTTPStatusError, ValueError, KeyError) as e:
+        logging.error(f"Error fetching data: {e}")
         return None
 
 
-# testing
 @app.local_entrypoint()
 def test():
     fetch_fear_and_greed.remote()

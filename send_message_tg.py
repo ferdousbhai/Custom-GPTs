@@ -10,10 +10,14 @@ app = App("send-message-to-tg")
 )
 async def send_message(bot_token: str, chat_id: int, text: str):
     from telegram import Bot
+    from telegram.error import TelegramError
 
-    async with Bot(token=bot_token) as bot:
-        await bot.send_message(
-            chat_id=chat_id,
-            text=convert_to_markdown_v2(text),
-            parse_mode="MarkdownV2",
-        )
+    try:
+        async with Bot(token=bot_token) as bot:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=convert_to_markdown_v2(text),
+                parse_mode="MarkdownV2",
+            )
+    except TelegramError as e:
+        print(f"Failed to send message: {e}")

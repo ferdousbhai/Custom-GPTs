@@ -7,9 +7,7 @@ logging.basicConfig(level=logging.INFO)
 
 app = App("get-options")
 
-image = Image.debian_slim(python_version="3.12").run_commands(
-    "pip install pandas yfinance tabulate"
-)
+image = Image.debian_slim().pip_install("pandas", "yfinance", "tabulate")
 
 options_dict = Dict.from_name("options-data", create_if_missing=True)
 
@@ -30,7 +28,7 @@ def parse_option_symbol(symbol: str):
     return (ticker, strike_price, option_type, expiry_date)
 
 
-@app.function()
+@app.function(image=image)
 def get_options(
     ticker_symbol: str,
     num_options: int = 10,
@@ -58,32 +56,30 @@ def get_options(
     import yfinance as yf
     from tabulate import tabulate
 
-    try:
-        if ticker_symbol in options_dict and datetime.now() - options_dict[
-            ticker_symbol
-        ]["updated_at"] < timedelta(minutes=1):
+    # Simplify caching logic
+    if ticker_symbol in options_dict:
+        cached_data = options_dict[ticker_symbol]
+        if datetime.now() - cached_data["updated_at"] < timedelta(minutes=1):
             logging.info(f"Found cached options for {ticker_symbol}")
-            return options_dict[ticker_symbol]
-    except Exception as e:
-        logging.info(
-            f"Error retrieving options for {ticker_symbol}: {e}. Retrieving from Yahoo Finance."
-        )
+            return cached_data["data"]
 
     try:
         ticker = yf.Ticker(ticker_symbol)
+        expiration_dates = ticker.options
 
-        expiration_dates = ticker.options  # list of expiration dates
-        if start_date:
+        # Simplify date filtering
+        if start_date or end_date:
             expiration_dates = [
-                expiration_date
-                for expiration_date in expiration_dates
-                if datetime.strptime(expiration_date, "%Y-%m-%d").date() >= start_date
-            ]
-        if end_date:
-            expiration_dates = [
-                expiration_date
-                for expiration_date in expiration_dates
-                if datetime.strptime(expiration_date, "%Y-%m-%d").date() <= end_date
+                exp
+                for exp in expiration_dates
+                if (
+                    not start_date
+                    or datetime.strptime(exp, "%Y-%m-%d").date() >= start_date
+                )
+                and (
+                    not end_date
+                    or datetime.strptime(exp, "%Y-%m-%d").date() <= end_date
+                )
             ]
 
         options_df = pd.concat(
@@ -102,6 +98,7 @@ def get_options(
 
         options_df["price"] = (options_df["ask"] + options_df["bid"]) / 2
 
+        # Simplify price target filtering
         if price_target:
             options_df = options_df[
                 (
@@ -116,9 +113,8 @@ def get_options(
 
         top_option_choices = options_df.nlargest(num_options, "openInterest")
 
-        result = []
-        for _, option in top_option_choices.iterrows():
-            option_data = [
+        result = [
+            [
                 f"{option['ticker']} {option['strike']}{option['option_type']} {option['expiry'].strftime('%-m/%-d/%y')}",
                 option["openInterest"],
                 f"{round(option['impliedVolatility'] * 100, 2)}%"
@@ -129,25 +125,25 @@ def get_options(
                 if option.get("ask", 0) > 0 and option.get("bid", 0) > 0
                 else None,
             ]
-            result.append(option_data)
+            for _, option in top_option_choices.iterrows()
+        ]
 
-            headers = [
-                "Option Description",
-                "Open Interest",
-                "Implied Volatility",
-                "Volume",
-                "Price",
-            ]
-            table = tabulate(result, headers, tablefmt="plain")
-            options_dict[ticker_symbol] = {
-                "data": table,
-                "updated_at": datetime.now(),
-            }
+        headers = [
+            "Option Description",
+            "Open Interest",
+            "Implied Volatility",
+            "Volume",
+            "Price",
+        ]
+        table = tabulate(result, headers, tablefmt="plain")
+
+        options_dict[ticker_symbol] = {"data": table, "updated_at": datetime.now()}
         logging.info(table)
-        return options_dict[ticker_symbol]["data"]
+        return table
 
     except Exception as e:
-        raise e
+        logging.error(f"Error retrieving options for {ticker_symbol}: {e}")
+        return None
 
 
 # testing

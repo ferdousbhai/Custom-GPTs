@@ -1,13 +1,11 @@
-import asyncio
 from datetime import datetime, timedelta
-import logging
-import os
 from typing import Iterable
-
-from modal import App, Image, Secret, Function, Dict, web_endpoint
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-
+from modal import App, Image, Secret, Function, Dict, web_endpoint
+import asyncio
+import logging
+import os
 
 logging.basicConfig(level=logging.INFO)
 
@@ -83,9 +81,6 @@ async def get_top_trending_tickers(
 def get_trending_stocks_and_news(
     num_stocks: int = 6,
 ) -> list[tuple[str, list[dict], list[dict]]]:
-    """
-    Get the top news and options for each ticker
-    """
     import yfinance as yf
 
     tickers = get_top_trending_tickers.remote(num_stocks)
@@ -112,5 +107,5 @@ def endpoint(
 
 
 @app.local_entrypoint()
-async def main():
+async def local():
     print(get_top_trending_tickers.remote(10))

@@ -10,8 +10,7 @@ ddgs_news_results = Dict.from_name("ddgs_news_results", create_if_missing=True)
 
 
 @app.function(
-    image=Image.debian_slim(python_version="3.12").pip_install("duckduckgo_search"),
-    keep_warm=1,
+    image=Image.debian_slim(python_version="3.12").pip_install("duckduckgo_search")
 )
 async def get_ddgs_news(
     search_term: str,

@@ -23,7 +23,7 @@ get_ddgs_news = Function.lookup("ddgs-news", "get_ddgs_news")
 get_options = Function.lookup("get-options", "get_options")
 
 
-@app.function(image=image, keep_warm=1)
+@app.function(image=image)
 async def generate_investment_report(ticker_to_research: str) -> dict:
     """
     Generate an investment report for a given ticker.
@@ -39,7 +39,6 @@ async def generate_investment_report(ticker_to_research: str) -> dict:
 
     logging.info(f"Generating report for: {ticker_to_research}")
 
-    # Ticker object
     ticker = yf.Ticker(ticker_to_research)
 
     result = {}
@@ -59,12 +58,16 @@ async def generate_investment_report(ticker_to_research: str) -> dict:
     # Get analyst recommendations from yfinance
     if not ticker.recommendations.empty:  # recommendations is a DataFrame
         logging.info("Fetched analyst recommendations")
-        result["analyst_recommendations"] = ticker.recommendations.to_json()
+        result["analyst_recommendations"] = ticker.recommendations.to_dict(
+            orient="records"
+        )
 
     # Get upgrades and downgrades from yfinance
     if not ticker.upgrades_downgrades.empty:  # upgrades_downgrades is a DataFrame
         logging.info("Fetched upgrades and downgrades")
-        result["upgrades_downgrades"] = ticker.upgrades_downgrades.head(20).to_json()
+        result["upgrades_downgrades"] = ticker.upgrades_downgrades.head(20).to_dict(
+            orient="records"
+        )
 
     # Get options
     options: list[list[dict]] = get_options.remote(ticker_to_research)
@@ -76,7 +79,7 @@ async def generate_investment_report(ticker_to_research: str) -> dict:
     return result
 
 
-@app.function(secrets=[Secret.from_name("auth-token")], keep_warm=1)
+@app.function(secrets=[Secret.from_name("auth-token")])
 @web_endpoint()
 async def endpoint(
     ticker_to_research: str, token: HTTPAuthorizationCredentials = Depends(auth_scheme)
@@ -108,4 +111,4 @@ async def endpoint(
 
 @app.local_entrypoint()
 def test():
-    print(generate_investment_report.remote("AAPL"))
+    print(generate_investment_report.remote("SP"))

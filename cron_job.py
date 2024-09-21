@@ -69,9 +69,12 @@ def cron_job(send_to_telegram: bool = True):
     ## get crypto iv rank
     iv_ranks = list(scrape_crypto_iv_rank.map(crypto_tickers))
     for ticker, iv_rank in zip(crypto_tickers, iv_ranks):
-        logger.info(f"🔔 {ticker} IV Rank is {iv_rank:.1%}.")
-        if iv_rank < 0.2 or iv_rank > 0.8:
-            output_messages.append(f"🔔 {ticker} IV Rank is {iv_rank:.1%}!")
+        if iv_rank is not None:
+            logger.info(f"🔔 {ticker} IV Rank is {iv_rank:.1%}.")
+            if iv_rank < 0.2 or iv_rank > 0.8:
+                output_messages.append(f"🔔 {ticker} IV Rank is {iv_rank:.1%}!")
+            else:
+                logger.warning(f"🔔 {ticker} IV Rank is not available.")
 
     # send message to telegram
     if send_to_telegram:

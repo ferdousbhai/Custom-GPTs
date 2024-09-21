@@ -5,7 +5,7 @@ logging.basicConfig(level=logging.INFO)
 
 app = modal.App("crypto-iv-rank")
 
-playwright_image = modal.Image.debian_slim(python_version="3.12").run_commands(
+image = modal.Image.debian_slim(python_version="3.12").run_commands(
     "apt-get update",
     "apt-get install -y software-properties-common",
     "apt-add-repository non-free",
@@ -16,7 +16,7 @@ playwright_image = modal.Image.debian_slim(python_version="3.12").run_commands(
 )
 
 
-@app.function(image=playwright_image)
+@app.function(image=image)
 def scrape_crypto_iv_rank(ticker: str) -> float | None:
     from playwright.sync_api import sync_playwright
 
@@ -34,7 +34,9 @@ def scrape_crypto_iv_rank(ticker: str) -> float | None:
             )
 
             if iv_rank_element:
-                iv_rank_str = iv_rank_element.inner_text()
+                iv_rank_str = (
+                    iv_rank_element.inner_text().split(":")[-1].strip().rstrip("%")
+                )
                 iv_rank = float(iv_rank_str) / 100
                 logging.info(f"{ticker} IV Rank: {iv_rank:.1%}")
                 if iv_rank == 0:
@@ -42,7 +44,7 @@ def scrape_crypto_iv_rank(ticker: str) -> float | None:
                         f"{ticker} IV Rank is 0! The website structure might have changed."
                     )
                     return None
-                return iv_rank
+
             else:
                 logging.info(
                     "IV Rank not found. The website structure might have changed."

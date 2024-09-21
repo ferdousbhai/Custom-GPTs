@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timedelta
 import logging
 import os
@@ -24,7 +25,18 @@ def sort_stocks(data, key):
     return sorted(data, key=lambda item: item[key], reverse=True)
 
 
-@app.function(image=Image.debian_slim().pip_install("httpx"))
+async def check_ticker(ticker):
+    import yfinance as yf
+
+    return ticker if yf.Ticker(ticker).info.get("symbol") else None
+
+
+async def filter_valid_tickers(tickers: Iterable[str]) -> Iterable[str]:
+    valid_tickers = await asyncio.gather(*(check_ticker(ticker) for ticker in tickers))
+    return [ticker for ticker in valid_tickers if ticker is not None]
+
+
+@app.function(image=Image.debian_slim().pip_install("httpx", "yfinance"))
 async def get_top_trending_tickers(
     num_stocks: int, filter: str = "wallstreetbets"
 ) -> Iterable[str]:
@@ -58,6 +70,7 @@ async def get_top_trending_tickers(
     most_mentions = sort_stocks(data["results"], "mentions")[:num_stocks]
 
     top_trending_tickers = {stock["ticker"] for stock in most_upvoted + most_mentions}
+    top_trending_tickers = await filter_valid_tickers(top_trending_tickers)
 
     # save to dict
     tickers_dict["trending"] = top_trending_tickers
@@ -66,10 +79,7 @@ async def get_top_trending_tickers(
     return top_trending_tickers
 
 
-@app.function(
-    image=Image.debian_slim().pip_install("yfinance"),
-    keep_warm=1,
-)
+@app.function(image=Image.debian_slim().pip_install("yfinance"))
 def get_trending_stocks_and_news(
     num_stocks: int = 6,
 ) -> list[tuple[str, list[dict], list[dict]]]:
@@ -86,10 +96,7 @@ def get_trending_stocks_and_news(
     return list(zip(tickers, news, options))
 
 
-@app.function(
-    secrets=[Secret.from_name("auth-token")],
-    keep_warm=1,
-)
+@app.function(secrets=[Secret.from_name("auth-token")])
 @web_endpoint()
 def endpoint(
     num_stocks: int = 6, token: HTTPAuthorizationCredentials = Depends(auth_scheme)
@@ -102,3 +109,8 @@ def endpoint(
         )
 
     return get_trending_stocks_and_news.remote(num_stocks)
+
+
+@app.local_entrypoint()
+async def main():
+    print(get_top_trending_tickers.remote(10))

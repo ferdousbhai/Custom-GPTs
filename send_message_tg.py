@@ -6,8 +6,7 @@ app = App("send-message-to-tg")
 
 
 @app.function(
-    image=Image.debian_slim(python_version="3.12").pip_install("python-telegram-bot"),
-    keep_warm=1,
+    image=Image.debian_slim(python_version="3.12").pip_install("python-telegram-bot")
 )
 async def send_message(bot_token: str, chat_id: int, text: str):
     from telegram import Bot

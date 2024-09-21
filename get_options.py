@@ -30,7 +30,7 @@ def parse_option_symbol(symbol: str):
     return (ticker, strike_price, option_type, expiry_date)
 
 
-@app.function(image=image, keep_warm=1)
+@app.function()
 def get_options(
     ticker_symbol: str,
     num_options: int = 10,

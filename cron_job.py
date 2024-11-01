@@ -1,28 +1,14 @@
 import os
 import logging
-from modal import App, Function, Cron, Secret
+from modal import App, Cron, Secret
+
+from function_registry import functions
 from utils.options_watchlist import add_to_watchlist
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = App("cronjobs")
-
-# deployed functions
-functions = {
-    "send_message": Function.lookup("send-message-to-tg", "send_message"),
-    "fetch_fear_and_greed": Function.lookup("fear-and-greed", "fetch_fear_and_greed"),
-    "get_top_trending_tickers": Function.lookup(
-        "trending-stocks", "get_top_trending_tickers"
-    ),
-    "fetch_bitcoin_fear_and_greed": Function.lookup(
-        "crypto-fear-and-greed", "fetch_bitcoin_fear_and_greed"
-    ),
-    "get_crypto_funding_rates": Function.lookup(
-        "crypto-funding-rates", "get_crypto_funding_rates"
-    ),
-    "scrape_crypto_iv_rank": Function.lookup("crypto-iv-rank", "scrape_crypto_iv_rank"),
-}
 
 
 @app.function(
@@ -40,7 +26,7 @@ def cron_job(send_to_telegram: bool = True):
     # CNN fear and greed index
     score, rating = functions["fetch_fear_and_greed"].remote()
     add_message(
-        score > 80 or score < 20, f"🔔 CNN Fear & Greed Index is {score} - {rating}."
+        score > 75 or score < 25, f"🔔 CNN Fear & Greed Index is {score} - {rating}."
     )
 
     # Add trending stocks to watchlist
@@ -58,7 +44,7 @@ def cron_job(send_to_telegram: bool = True):
     # Bitcoin fear and greed index
     score, rating = functions["fetch_bitcoin_fear_and_greed"].remote()
     add_message(
-        score > 80 or score < 20,
+        score > 75 or score < 25,
         f"🔔 Bitcoin Fear & Greed Index is {score} - {rating}.",
     )
 

@@ -76,20 +76,20 @@ async def endpoint(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    entry = stock_analysis_dict.setdefault(
-        ticker_to_research, {"report": None, "timestamp": None}
-    )
+    if ticker_to_research not in stock_analysis_dict:
+        stock_analysis_dict[ticker_to_research] = {"report": None, "timestamp": None}
+
+    entry = stock_analysis_dict[ticker_to_research]
+
     if (
         entry["report"] is None
         or entry["timestamp"] is None
         or datetime.now() - entry["timestamp"] > timedelta(minutes=10)
     ):
-        entry.update(
-            {
-                "report": generate_investment_report.remote(ticker_to_research),
-                "timestamp": datetime.now(),
-            }
-        )
+        stock_analysis_dict[ticker_to_research] = {
+            "report": generate_investment_report.remote(ticker_to_research),
+            "timestamp": datetime.now(),
+        }
         logging.info(f"Updated report for {ticker_to_research}")
 
     return entry
@@ -97,4 +97,4 @@ async def endpoint(
 
 @app.local_entrypoint()
 def test():
-    print(generate_investment_report.remote("SP"))
+    print(generate_investment_report.remote("DM"))

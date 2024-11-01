@@ -1,8 +1,4 @@
 __pycache__
-functions/__pycache__
-_tools
+.DS_Store
 .venv
-main.py
-test*
-try*
-TODO
+tests

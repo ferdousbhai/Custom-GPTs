@@ -1,7 +1,9 @@
 import os
 import logging
 from datetime import date, datetime, timedelta
+from decimal import Decimal
 
+from pydantic import BaseModel
 import modal
 
 from utils.options_watchlist import add_to_watchlist
@@ -17,6 +19,26 @@ tastytrade_image = modal.Image.debian_slim(python_version="3.12").run_commands(
 tickers_dict = modal.Dict.from_name("tickers-data", create_if_missing=True)
 
 tastytrade_dict = modal.Dict.from_name("tastytrade-data", create_if_missing=True)
+
+
+class MetricData(BaseModel):
+    """
+    Represents processed market metric data for a single symbol.
+    """
+
+    symbol: str
+    has_position: bool
+    iv_rank: str = "N/A"
+    iv_percentile: str = "N/A"
+    last_updated: str = "N/A"
+    liquidity_rank: str = "N/A"
+    liquidity_rating: str = "N/A"
+    lendability: str = "N/A"
+    borrow_rate: str = "N/A"
+    days_to_earnings: str = "N/A"
+
+    class Config:
+        frozen = True
 
 
 def get_tastytrade_session():
@@ -66,102 +88,151 @@ def get_current_position_symbols(session) -> set[str]:
     return {position.underlying_symbol for position in current_positions}
 
 
-def iv_rank_filter(
-    iv_rank: str | None, min_iv_rank: float = 0.2, max_iv_rank: float = 0.8
-) -> bool:
-    return iv_rank is not None and min_iv_rank <= float(iv_rank) <= max_iv_rank
+def get_volatility_data(required_tickers: list[str] = ()) -> list[MetricData]:
+    """
+    Fetches and processes volatility metrics for watchlist symbols.
+
+    Args:
+        required_tickers: List of ticker symbols to include regardless of metrics
+
+    Returns:
+        List of processed metric data for each relevant symbol
+    """
+    import pytz
+    import tastytrade
+
+    try:
+        if (
+            "volatility_data" in tastytrade_dict
+            and datetime.now() - tastytrade_dict["volatility_data_updated_at"]
+            < timedelta(minutes=10)
+            and all(
+                any(
+                    data.symbol == ticker for data in tastytrade_dict["volatility_data"]
+                )
+                for ticker in required_tickers
+            )
+        ):
+            logging.info("Found cached volatility data.")
+            return tastytrade_dict["volatility_data"]
+    except KeyError:
+        logging.info("Creating new volatility data.")
+
+    session = get_tastytrade_session()
+    current_position_symbols = get_current_position_symbols(session)
+
+    # ensure current positions and required tickers are in the watchlist:
+    add_to_watchlist(set(current_position_symbols) | set(required_tickers))
+
+    watchlist_metrics = tastytrade.metrics.get_market_metrics(
+        session, tickers_dict["watchlist"]
+    )
+
+    # Filter and sort metrics
+    filtered_metrics = [
+        x
+        for x in watchlist_metrics
+        if (
+            x.implied_volatility_index_rank is not None
+            and float(x.implied_volatility_index_rank) < 0.2
+            and x.implied_volatility_updated_at is not None
+        )  # cheap
+        or x.symbol in current_position_symbols  # open position
+        or x.symbol in required_tickers  # required by user
+    ]
+    sorted_metrics = sorted(
+        filtered_metrics,
+        key=lambda x: float(x.implied_volatility_index_rank or 0),
+        reverse=True,
+    )
+
+    def calculate_last_updated(updated_at: datetime) -> str:
+        if not updated_at:
+            return "N/A"
+        metric_time = (
+            updated_at.replace(tzinfo=pytz.UTC)
+            if updated_at.tzinfo is None
+            else updated_at.astimezone(pytz.UTC)
+        )
+        time_difference = datetime.now(pytz.UTC) - metric_time
+        return (
+            f"{time_difference.days}d ago"
+            if time_difference.days
+            else f"{time_difference.seconds // 3600}h {(time_difference.seconds % 3600) // 60}m ago"
+        )
+
+    def calculate_days_to_earnings(metric: tastytrade.metrics.MarketMetricInfo) -> str:
+        if metric.earnings and metric.earnings.expected_report_date:
+            if metric.earnings.expected_report_date >= date.today():
+                return str((metric.earnings.expected_report_date - date.today()).days)
+        return "N/A"
+
+    processed_data = []
+    for metric in sorted_metrics:
+        data = MetricData(
+            symbol=metric.symbol,
+            has_position=metric.symbol in current_position_symbols,
+            iv_rank=f"{Decimal(metric.implied_volatility_index_rank) * 100:.1f}%"
+            if metric.implied_volatility_index_rank is not None
+            else "N/A",
+            iv_percentile=f"{Decimal(metric.implied_volatility_percentile) * 100:.1f}%"
+            if metric.implied_volatility_percentile is not None
+            else "N/A",
+            last_updated=calculate_last_updated(metric.implied_volatility_updated_at),
+            liquidity_rank=f"{Decimal(metric.liquidity_rank) * 100:.1f}%"
+            if metric.liquidity_rank is not None
+            else "N/A",
+            liquidity_rating=str(metric.liquidity_rating)
+            if metric.liquidity_rating is not None
+            else "N/A",
+            lendability=str(metric.lendability)
+            if metric.lendability is not None
+            else "N/A",
+            borrow_rate=f"{Decimal(metric.borrow_rate) * 100:.1f}%"
+            if metric.borrow_rate is not None
+            else "N/A",
+            days_to_earnings=calculate_days_to_earnings(metric),
+        )
+        processed_data.append(data)
+
+    tastytrade_dict["volatility_data"] = processed_data
+    tastytrade_dict["volatility_data_updated_at"] = datetime.now()
+
+    return processed_data
 
 
 @app.function(
     image=tastytrade_image,
     secrets=[modal.Secret.from_name("tastytrade")],
 )
-def generate_report(required_tickers: list[str] = ()):
-    from decimal import Decimal
-    import pytz
-    import tastytrade
+def generate_report(required_tickers: list[str] = (), tickers_input: str = "") -> str:
+    """
+    Generates a complete HTML report of volatility metrics.
 
+    Args:
+        required_tickers: List of ticker symbols to include in the report
+        tickers_input: Original comma-separated ticker input string for form value
+
+    Returns:
+        Complete HTML string containing the formatted report page
+    """
     try:
-        if (
-            "volatility_report" in tastytrade_dict
-            and datetime.now() - tastytrade_dict["volatility_report_updated_at"]
-            < timedelta(minutes=10)
-            and all(ticker in tickers_dict["watchlist"] for ticker in required_tickers)
-        ):
-            logging.info("Found cached volatility report.")
-            return tastytrade_dict["volatility_report"]
-    except KeyError:
-        logging.info(
-            "Error finding cached volatility report. Creating new volatility report."
-        )
+        processed_data = get_volatility_data(required_tickers)
 
-    try:
-        session = get_tastytrade_session()
-        current_position_symbols = get_current_position_symbols(session)
-
-        # ensure current positions and required tickers are in the watchlist:
-        add_to_watchlist(set(current_position_symbols) | set(required_tickers))
-
-        watchlist_metrics = tastytrade.metrics.get_market_metrics(
-            session, tickers_dict["watchlist"]
-        )
-
-        # Filter and sort metrics
-        filtered_metrics = [
-            x
-            for x in watchlist_metrics
-            if iv_rank_filter(x.implied_volatility_index_rank)
-            or x.symbol in current_position_symbols
-            or (
-                x.symbol in required_tickers
-                and x.implied_volatility_index_rank is not None
-            )
-        ]
-        sorted_metrics = sorted(
-            filtered_metrics,
-            key=lambda x: float(x.implied_volatility_index_rank or 0),
-            reverse=True,
-        )
-
-        def calculate_last_updated(updated_at: datetime) -> str:
-            if not updated_at:
-                return "N/A"
-            metric_time = (
-                updated_at.replace(tzinfo=pytz.UTC)
-                if updated_at.tzinfo is None
-                else updated_at.astimezone(pytz.UTC)
-            )
-            time_difference = datetime.now(pytz.UTC) - metric_time
-            return (
-                f"{time_difference.days}d ago"
-                if time_difference.days
-                else f"{time_difference.seconds // 3600}h {(time_difference.seconds % 3600) // 60}m ago"
-            )
-
-        def calculate_days_to_earnings(
-            metric: tastytrade.metrics.MarketMetricInfo,
-        ) -> str:
-            days_to_earnings = "N/A"
-            if metric.earnings and metric.earnings.expected_report_date:
-                if metric.earnings.expected_report_date >= date.today():
-                    days_to_earnings = (
-                        f"{(metric.earnings.expected_report_date - date.today()).days}"
-                    )
-            return days_to_earnings
-
+        # Generate table rows
         table_rows = []
-        for metric in sorted_metrics:
+        for data in processed_data:
             row = f"""
             <tr>
-                <td>{metric.symbol + '*' if metric.symbol in current_position_symbols else metric.symbol}</td>
-                <td>{f"{Decimal(metric.implied_volatility_index_rank) * 100:.1f}%" if metric.implied_volatility_index_rank is not None else "N/A"}</td>
-                <td>{f"{Decimal(metric.implied_volatility_percentile) * 100:.1f}%" if metric.implied_volatility_percentile is not None else "N/A"}</td>
-                <td>{calculate_last_updated(metric.implied_volatility_updated_at)}</td>
-                <td>{f"{Decimal(metric.liquidity_rank) * 100:.1f}%" if metric.liquidity_rank is not None else "N/A"}</td>
-                <td>{metric.liquidity_rating if metric.liquidity_rating is not None else "N/A"}</td>
-                <td>{metric.lendability if metric.lendability is not None else "N/A"}</td>
-                <td>{f"{Decimal(metric.borrow_rate) * 100:.1f}%" if metric.borrow_rate is not None else "N/A"}</td>
-                <td>{calculate_days_to_earnings(metric)}</td>
+                <td>{data.symbol + '*' if data.has_position else data.symbol}</td>
+                <td>{data.iv_rank}</td>
+                <td>{data.iv_percentile}</td>
+                <td>{data.last_updated}</td>
+                <td>{data.liquidity_rank}</td>
+                <td>{data.liquidity_rating}</td>
+                <td>{data.lendability}</td>
+                <td>{data.borrow_rate}</td>
+                <td>{data.days_to_earnings}</td>
             </tr>
             """
             table_rows.append(row)
@@ -177,10 +248,9 @@ def generate_report(required_tickers: list[str] = ()):
             "Borrow Rate",
             "Days to Earnings",
         ]
-
         header_row = "".join(f"<th>{header}</th>" for header in headers)
 
-        report = f"""
+        report_table = f"""
         <table class="volatility-table">
             <thead>
                 <tr>{header_row}</tr>
@@ -191,28 +261,7 @@ def generate_report(required_tickers: list[str] = ()):
         </table>
         """
 
-        tastytrade_dict["volatility_report"] = report
-        tastytrade_dict["volatility_report_updated_at"] = datetime.now()
-
-        return tastytrade_dict["volatility_report"]
-
-    except Exception as e:
-        logging.error(f"Error generating volatility report: {e}")
-        raise e
-
-
-@app.function(
-    allow_concurrent_inputs=10,
-    timeout=60,
-)
-@modal.asgi_app()
-def serve():
-    from fastapi import FastAPI, Form
-    from fastapi.responses import HTMLResponse
-
-    app = FastAPI()
-
-    def generate_html_content(report: str, tickers: str = "") -> str:
+        # Generate complete HTML page
         return f"""
         <!DOCTYPE html>
         <html lang="en">
@@ -265,11 +314,11 @@ def serve():
         <body>
             <h1>Option Analysis</h1>
             <form action="/refresh" method="post">
-                <input type="text" name="tickers" placeholder="Enter tickers (e.g., QQQ, SPY)" value="{tickers}">
+                <input type="text" name="tickers" placeholder="Enter tickers (e.g., QQQ, SPY)" value="{tickers_input}">
                 <input type="submit" value="Refresh Report">
             </form>
             <div class="table-container">
-                {report}
+                {report_table}
             </div>
             <script>
                 document.querySelectorAll('.volatility-table td:nth-child(2)').forEach(cell => {{
@@ -317,17 +366,31 @@ def serve():
         </html>
         """
 
+    except Exception as e:
+        logging.error(f"Error generating volatility report: {e}")
+        raise e
+
+
+@app.function(
+    allow_concurrent_inputs=10,
+    timeout=60,
+)
+@modal.asgi_app()
+def serve():
+    from fastapi import FastAPI, Form
+    from fastapi.responses import HTMLResponse
+
+    app = FastAPI()
+
     @app.get("/", response_class=HTMLResponse)
     async def root():
-        report = generate_report.remote()
-        return HTMLResponse(content=generate_html_content(report))
+        return HTMLResponse(content=generate_report.remote())
 
     @app.post("/refresh", response_class=HTMLResponse)
     async def refresh(tickers: str = Form(default="")):
         required_tickers = [
             ticker.strip() for ticker in tickers.split(",") if ticker.strip()
         ]
-        report = generate_report.remote(required_tickers)
-        return HTMLResponse(content=generate_html_content(report, tickers))
+        return HTMLResponse(content=generate_report.remote(required_tickers, tickers))
 
     return app
